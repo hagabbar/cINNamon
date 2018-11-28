@@ -1,0 +1,15 @@
+README.md
+setup.py
+FrEIA/__init__.py
+FrEIA/dummy_modules.py
+FrEIA/framework.py
+FrEIA.egg-info/PKG-INFO
+FrEIA.egg-info/SOURCES.txt
+FrEIA.egg-info/dependency_links.txt
+FrEIA.egg-info/top_level.txt
+FrEIA/modules/__init__.py
+FrEIA/modules/coeff_functs.py
+FrEIA/modules/coupling_layers.py
+FrEIA/modules/fixed_transforms.py
+FrEIA/modules/graph_topology.py
+FrEIA/modules/reshapes.py
