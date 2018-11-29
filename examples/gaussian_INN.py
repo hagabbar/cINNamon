@@ -25,7 +25,7 @@ os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 
 # define some global parameters
-event_name = 'gw150914'        # event name
+event_name = 'gausian'                # event name
 template_dir = 'gw_data/templates/'    # location of training templates directory
 data_dir = 'gw_data/data/'             # data folder location
 tag = '_srate-1024hz_oversamp_python3' # special tag for some files used
@@ -44,7 +44,7 @@ with open("%s%s_mc_q_lalinf_post_srate-1024_python3.sav" % (data_dir,event_name)
 lalinf_pars = pickle_lalinf_pars
 
 # define output path
-out_path = '/home/hunter.gabbard/public_html/CBC/cINNamon/%s/dropout_run' % event_name
+out_path = '/home/hunter.gabbard/public_html/CBC/cINNamon/%s' % event_name
 # setup output directory - if it does not exist
 os.system('mkdir -p %s' % out_path)
 os.system('mkdir -p %s/latest' % out_path)
