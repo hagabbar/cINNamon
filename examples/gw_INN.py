@@ -35,6 +35,13 @@ n_sig = 1          # standard deviation of the noise
 do_contours = True # add contours to PE results plot
 plot_cadence = 100
 n_pix = 1024
+n_neurons=32
+batch_size = 32
+# Training parameters
+n_epochs = 50000
+meta_epoch = 12 # what is this???
+n_its_per_epoch = 4
+
 
 # load in lalinference converted chirp mass and inverse mass ratio parameters
 with open("%s%s_mc_q_lalinf_post_srate-1024_python3.sav" % (data_dir,event_name), 'rb') as f:
@@ -499,7 +506,6 @@ def plot_losses(losses,filename,logscale=False,legend=None):
 
 def main():
     # Set up data
-    batch_size = 8 # set batch size
     test_split = 10 # number of testing samples to use
 
     # load in gw templates and signals
@@ -523,40 +529,44 @@ def main():
     pos = torch.tensor(signal_train_pars, dtype=torch.float)
 
     # setting up the model
-    ndim_tot = 1536  # two times the number data dimensions?
+    ndim_tot = n_pix+n_neurons  # two times the number data dimensions?
     ndim_x = 2    # number of parameter dimensions
-    ndim_y = 1024    # number of data dimensions
-    ndim_z = 4    # number of latent space dimensions?
+    ndim_y = n_pix    # number of data dimensions
+    ndim_z = 3    # number of latent space dimensions?
 
     # define different parts of the network
     # define input node
     inp = InputNode(ndim_tot, name='input')
 
     # define hidden layer nodes
+    # number of nodes equal to number of parameters?
     t1 = Node([inp.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.1}})
-
+               'F_args': {'dropout': 0.0}})
+    
     t2 = Node([t1.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.1}})
-
+               'F_args': {'dropout': 0.05}})
+    """
     t3 = Node([t2.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.1}})
+               'F_args': {'dropout': 0.05}})
 
+    t4 = Node([t3.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.0}})
+
+    t5 = Node([t4.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.0}})
+    """
     # define output layer node
-    outp = OutputNode([t3.out0], name='output')
+    outp = OutputNode([t2.out0], name='output')
 
-    nodes = [inp, t1, t2, t3, outp]
+    nodes = [inp, t1, t2, outp]
     model = ReversibleGraphNet(nodes)
 
     # Train model
-    # Training parameters
-    n_epochs = 50000
-    meta_epoch = 12 # what is this???
-    n_its_per_epoch = 4
-    batch_size = 32
 
     lr = 1e-2
     gamma = 0.01**(1./120)
