@@ -34,14 +34,14 @@ total_temp_num = 50000         # total number of gw templates to load
 n_sig = 1          # standard deviation of the noise
 do_contours = True # add contours to PE results plot
 plot_cadence = 100
-n_pix = 1024
+n_pix = 16 
 
 # load in lalinference converted chirp mass and inverse mass ratio parameters
-with open("%s%s_mc_q_lalinf_post_srate-1024_python3.sav" % (data_dir,event_name), 'rb') as f:
-    pickle_lalinf_pars = pickle.load(f)
+#with open("%s%s_mc_q_lalinf_post_srate-1024_python3.sav" % (data_dir,event_name), 'rb') as f:
+#    pickle_lalinf_pars = pickle.load(f)
 
 #pickle_lalinf_pars = open("%s%s_mc_q_lalinf_post.sav" % (data_dir,event_name), "rb")
-lalinf_pars = pickle_lalinf_pars
+#lalinf_pars = pickle_lalinf_pars
 
 # define output path
 out_path = '/home/hunter.gabbard/public_html/CBC/cINNamon/%s' % event_name
@@ -503,30 +503,44 @@ def main():
     test_split = 10 # number of testing samples to use
 
     # load in gw templates and signals
-    signal_train_images, signal_train_pars, signal_image, noise_signal, signal_pars = load_gw_data()
+    #signal_train_images, signal_train_pars, signal_image, noise_signal, signal_pars = load_gw_data()
 
-    for sig in signal_train_images:
-        sig += np.random.normal(loc=0.0, scale=n_sig)
+    #for sig in signal_train_images:
+    #    sig += np.random.normal(loc=0.0, scale=n_sig)
 
     # load in lalinference noise signal
-    noise_signal = h5py.File("gw_data/data/%s0%s.hdf5" % (event_name,tag),"r")
-    noise_signal = np.reshape(noise_signal['wht_wvf'][:] * 817.98,(n_pix,1)) # need to not have this hardcoded
+    #noise_signal = h5py.File("gw_data/data/%s0%s.hdf5" % (event_name,tag),"r")
+    #noise_signal = np.reshape(noise_signal['wht_wvf'][:] * 817.98,(n_pix,1)) # need to not have this hardcoded
+
+    # make training signals
+    signal_train_pars = []
+    signal_train_images = []
+    for i in range(total_temp_num):
+        signal_train_pars.append([np.random.uniform(-1.0,1.0),np.random.uniform(0.5,1.5)])
+        signal_train_images.append(np.random.normal(loc=signal_train_pars[i][0], scale=signal_train_pars[i][1], size=(1,n_pix)))
+    signal_train_pars = np.array(signal_train_pars)
+    signal_train_images = np.array(signal_train_images).reshape(total_temp_num,n_pix)
+
+
+    # make random 1D gaussian signal
+    noise_signal = np.random.normal(loc=0.0, scale=1.0, size=(1,n_pix))
+    signal_pars = [0.0,1.0]
 
     # load in lalinference samples
-    with open('gw_data/data/gw150914_mc_q_lalinf_post_srate-1024_python3.sav','rb' ) as f:
-        lalinf_post = pickle.load(f) 
-    lalinf_mc = lalinf_post[0]
-    lalinf_q = lalinf_post[1]
+    #with open('gw_data/data/gw150914_mc_q_lalinf_post_srate-1024_python3.sav','rb' ) as f:
+    #    lalinf_post = pickle.load(f) 
+    #lalinf_mc = lalinf_post[0]
+    #lalinf_q = lalinf_post[1]
 
     # declare gw variants of positions and labels
     labels = torch.tensor(signal_train_images, dtype=torch.float)
     pos = torch.tensor(signal_train_pars, dtype=torch.float)
 
     # setting up the model
-    ndim_tot = 1536  # two times the number data dimensions?
+    ndim_tot = n_pix*2  # two times the number data dimensions?
     ndim_x = 2    # number of parameter dimensions
-    ndim_y = 1024    # number of data dimensions
-    ndim_z = 4    # number of latent space dimensions?
+    ndim_y = n_pix    # number of data dimensions
+    ndim_z = 2    # number of latent space dimensions?
 
     # define different parts of the network
     # define input node
@@ -535,15 +549,15 @@ def main():
     # define hidden layer nodes
     t1 = Node([inp.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.1}})
+               'F_args': {'dropout': 0.0}})
 
     t2 = Node([t1.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.1}})
+               'F_args': {'dropout': 0.0}})
 
     t3 = Node([t2.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.1}})
+               'F_args': {'dropout': 0.0}})
 
     # define output layer node
     outp = OutputNode([t3.out0], name='output')
@@ -616,7 +630,7 @@ def main():
     #x_samps = torch.cat([x for x,y in test_loader], dim=0)[:N_samp]
     #y_samps = torch.cat([y for x,y in test_loader], dim=0)[:N_samp]
     #y_samps += torch.randn(N_samp, ndim_y) #* y_noise_scale
-    y_samps = np.transpose(torch.tensor(np.repeat(noise_signal, N_samp, axis=1), dtype=torch.float))
+    y_samps = torch.tensor(np.repeat(noise_signal, N_samp, axis=0), dtype=torch.float)
 
     # make test samples. First element is the latent space dimension
     # second element is the extra zeros needed to pad the input.
@@ -626,6 +640,10 @@ def main():
                          y_samps], dim=1)
     # what we should have now are 1000 copies of the event burried in noise with zero padding up to 2048
     y_samps = y_samps.to(device)
+
+
+
+    lalinf_post = np.array([np.random.normal(loc=0,scale=1.0,size=(N_samp)), np.random.normal(loc=1.0,scale=1.0,size=(N_samp))])
 
     # start training loop
     lossf_hist = []
@@ -659,19 +677,21 @@ def main():
         
             # plot pe results and loss
             if ((i_epoch % plot_cadence == 0) & (i_epoch>0)):
-                pe_std = [0.02185649964844209, 0.005701401364171313] # this will need to be removed
-                beta_score_hist.append([plot_pe_samples(rev_x,signal_pars,out_path,i_epoch,lalinf_post,pe_std)]) 
-                plt.plot(np.linspace(plot_cadence,i_epoch,len(beta_score_hist)),beta_score_hist)
-                plt.savefig('%s/latest/beta_hist.png' % out_path)
-                plt.close()
+                #pe_std = [0.005, 0.01] # this will need to be removed
+                #beta_score_hist.append([plot_pe_samples(rev_x,signal_pars,out_path,i_epoch,lalinf_post,pe_std)]) 
+                #plt.plot(np.linspace(plot_cadence,i_epoch,len(beta_score_hist)),beta_score_hist)
+                #plt.savefig('%s/latest/beta_hist.png' % out_path)
+                #plt.close()
 
                 # plot loss curves - non-log and log
                 plot_losses(pe_losses,'%s/latest/pe_losses.png' % out_path,legend=['PE-GEN'])
                 plot_losses(pe_losses,'%s/latest/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
 
-            # make PE scatter plots with contours and beta score 
-            #plt.scatter(rev_x[:,0], rev_x[:,1], s=1., c='red')
-            #plt.scatter(lalinf_mc, lalinf_q, s=1., c='blue')
+                # make PE scatter plots with contours and beta score 
+                plt.scatter(rev_x[:,0], rev_x[:,1], s=1., c='red')
+                plt.scatter(signal_pars[0], signal_pars[1], s=50., c='blue', marker='+')
+                plt.savefig('%s/latest/predicted_pe.png' % out_path)
+                plt.close()
         
 
     except KeyboardInterrupt:
