@@ -36,10 +36,10 @@ do_contours = True # add contours to PE results plot
 plot_cadence = 25
 n_pix = 1024
 n_neurons=0
-batch_size = 512
+batch_size = 256
 # Training parameters
 n_epochs = 100000
-meta_epoch = 100 # after every N meta epochs, decay the learning rate
+meta_epoch = 12 # after every N meta epochs, decay the learning rate
 n_its_per_epoch = 4
 
 
@@ -533,7 +533,7 @@ def main():
     # setting up the model
     ndim_x = 2    # number of parameter dimensions
     ndim_y = n_pix    # number of data dimensions
-    ndim_z = 256    # number of latent space dimensions?
+    ndim_z = 300    # number of latent space dimensions?
     ndim_tot = n_pix+ndim_z+ndim_x+n_neurons  # two times the number data dimensions?
 
     # define different parts of the network
@@ -550,12 +550,12 @@ def main():
     t2 = Node([t1.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
-    
+     
     
     t3 = Node([t2.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
-
+    
     
     t4 = Node([t3.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
@@ -564,11 +564,23 @@ def main():
     t5 = Node([t4.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
-   
-    # define output layer node
-    outp = OutputNode([t5.out0], name='output')
 
-    nodes = [inp, t1, t2, t3, t4, t5, outp]
+    t6 = Node([t5.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.0}})
+
+    t7 = Node([t6.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.0}})
+
+    t8 = Node([t7.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.0}})
+    
+    # define output layer node
+    outp = OutputNode([t8.out0], name='output')
+
+    nodes = [inp, t1, t2, t3, t4, t5, t6, t7, t8, outp]
     model = ReversibleGraphNet(nodes)
 
     # Train model
