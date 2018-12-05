@@ -39,7 +39,7 @@ n_neurons=0
 batch_size = 256
 # Training parameters
 n_epochs = 100000
-meta_epoch = 12 # after every N meta epochs, decay the learning rate
+meta_epoch = 5 # after every N meta epochs, decay the learning rate
 n_its_per_epoch = 4
 
 
@@ -576,16 +576,24 @@ def main():
     t8 = Node([t7.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
+
+    t9 = Node([t8.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.0}})
+    
+    t10 = Node([t9.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.0}})
     
     # define output layer node
-    outp = OutputNode([t8.out0], name='output')
+    outp = OutputNode([t10.out0], name='output')
 
-    nodes = [inp, t1, t2, t3, t4, t5, t6, t7, t8, outp]
+    nodes = [inp, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, outp]
     model = ReversibleGraphNet(nodes)
 
     # Train model
 
-    lr = 1e-3
+    lr = 5e-3
     gamma = 0.01**(1./120)
     l2_reg = 2e-5
 
