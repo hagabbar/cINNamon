@@ -33,13 +33,13 @@ sanity_check_file = 'gw150914_cnn_sanity_check_ts_mass-time-vary_srate-1024hz.sa
 total_temp_num = 50000         # total number of gw templates to load
 n_sig = 1          # standard deviation of the noise
 do_contours = True # add contours to PE results plot
-plot_cadence = 100
+plot_cadence = 25
 n_pix = 1024
-n_neurons=32
-batch_size = 32
+n_neurons=0
+batch_size = 512
 # Training parameters
-n_epochs = 50000
-meta_epoch = 12 # what is this???
+n_epochs = 100000
+meta_epoch = 100 # after every N meta epochs, decay the learning rate
 n_its_per_epoch = 4
 
 
@@ -525,14 +525,16 @@ def main():
     lalinf_q = lalinf_post[1]
 
     # declare gw variants of positions and labels
+    mc_max = np.max(signal_train_pars[:,0])
+    #signal_train_pars /= mc_max
     labels = torch.tensor(signal_train_images, dtype=torch.float)
     pos = torch.tensor(signal_train_pars, dtype=torch.float)
 
     # setting up the model
-    ndim_tot = n_pix+n_neurons  # two times the number data dimensions?
     ndim_x = 2    # number of parameter dimensions
     ndim_y = n_pix    # number of data dimensions
-    ndim_z = 3    # number of latent space dimensions?
+    ndim_z = 256    # number of latent space dimensions?
+    ndim_tot = n_pix+ndim_z+ndim_x+n_neurons  # two times the number data dimensions?
 
     # define different parts of the network
     # define input node
@@ -544,31 +546,34 @@ def main():
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
     
+    
     t2 = Node([t1.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.05}})
-    """
+               'F_args': {'dropout': 0.0}})
+    
+    
     t3 = Node([t2.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.05}})
+               'F_args': {'dropout': 0.0}})
 
+    
     t4 = Node([t3.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
-
+    
     t5 = Node([t4.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
-    """
+   
     # define output layer node
-    outp = OutputNode([t2.out0], name='output')
+    outp = OutputNode([t5.out0], name='output')
 
-    nodes = [inp, t1, t2, outp]
+    nodes = [inp, t1, t2, t3, t4, t5, outp]
     model = ReversibleGraphNet(nodes)
 
     # Train model
 
-    lr = 1e-2
+    lr = 1e-3
     gamma = 0.01**(1./120)
     l2_reg = 2e-5
 
@@ -666,6 +671,7 @@ def main():
             # predict parameters of signal
             rev_x = model(y_samps, rev=True)
             rev_x = rev_x.cpu().data.numpy()
+            #rev_x[:,0] = mc_max * rev_x[:,0]
         
             # plot pe results and loss
             if ((i_epoch % plot_cadence == 0) & (i_epoch>0)):
