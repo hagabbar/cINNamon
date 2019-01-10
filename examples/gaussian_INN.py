@@ -42,7 +42,7 @@ n_epochs = 50000
 meta_epoch = 12 # what is this???
 n_its_per_epoch = 20 #4
 batch_size = 256 # 1600
-n_neurons = 801 # 1808
+n_neurons = 32 # 1808
 
 
 # load in lalinference converted chirp mass and inverse mass ratio parameters
@@ -53,7 +53,7 @@ n_neurons = 801 # 1808
 #lalinf_pars = pickle_lalinf_pars
 
 # define output path
-out_path = '/home/hunter.gabbard/public_html/CBC/cINNamon/%s' % event_name
+out_path = '/home/hunter/CBC/cINNamon/output_files/%s' % event_name
 # setup output directory - if it does not exist
 os.system('mkdir -p %s' % out_path)
 os.system('mkdir -p %s/latest' % out_path)
