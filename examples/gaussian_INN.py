@@ -3,7 +3,7 @@ import torch.optim
 
 import numpy as np
 import scipy
-from scipy.stats import uniform, gaussian_kde, ks_2samp, anderson_ksamp
+from scipy.stats import norm, uniform, gaussian_kde, ks_2samp, anderson_ksamp
 from scipy.special import logit, expit
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -14,6 +14,7 @@ from FrEIA.framework import InputNode, OutputNode, Node, ReversibleGraphNet
 from FrEIA.modules import rev_multiplicative_layer, F_fully_connected
 
 import data
+#from like import compute_like
 
 from sys import exit
 import os
@@ -30,11 +31,19 @@ template_dir = 'gw_data/templates/'    # location of training templates director
 data_dir = 'gw_data/data/'             # data folder location
 tag = '_srate-1024hz_oversamp_python3' # special tag for some files used
 sanity_check_file = 'gw150914_cnn_sanity_check_ts_mass-time-vary_srate-1024hz.sav' # name of file used for checking absolute best performance of CNN
-total_temp_num = 50000         # total number of gw templates to load
+total_temp_num = 5000000         # total number of gw templates to load
 n_sig = 1          # standard deviation of the noise
 do_contours = True # add contours to PE results plot
-plot_cadence = 100
-n_pix = 16 
+plot_cadence = 10
+n_pix = 64
+test_split = 10 # number of testing samples to use
+# Training parameters
+n_epochs = 50000
+meta_epoch = 12 # what is this???
+n_its_per_epoch = 20 #4
+batch_size = 256 # 1600
+n_neurons = 801 # 1808
+
 
 # load in lalinference converted chirp mass and inverse mass ratio parameters
 #with open("%s%s_mc_q_lalinf_post_srate-1024_python3.sav" % (data_dir,event_name), 'rb') as f:
@@ -112,10 +121,10 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
 
         y_clean = y.clone()
         # zeros_noise_scale *
-        pad_x = torch.randn(batch_size, ndim_tot -
+        pad_x = zeros_noise_scale * torch.randn(batch_size, ndim_tot -
                                                 ndim_x, device=device)
         # zeros_noise_scale *
-        pad_yz = torch.randn(batch_size, ndim_tot -
+        pad_yz = zeros_noise_scale * torch.randn(batch_size, ndim_tot -
                                                  ndim_y - ndim_z, device=device)
 
         y += torch.randn(batch_size, ndim_y, dtype=torch.float, device=device) #* y_noise_scale
@@ -145,7 +154,7 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
 
         # Backward step:
         #zeros_noise_scale *
-        pad_yz = torch.randn(batch_size, ndim_tot -
+        pad_yz = zeros_noise_scale * torch.randn(batch_size, ndim_tot -
                                                  ndim_y - ndim_z, device=device)
         y = y_clean + torch.randn(batch_size, ndim_y, device=device) #* y_noise_scale
 
@@ -497,20 +506,47 @@ def plot_losses(losses,filename,logscale=False,legend=None):
     plt.savefig(filename)
     plt.close('all')
 
+def compute_like(x,mu0=0.0,sig0=1.0,N=64):
+    nmu = 101       # number of mu grid points
+    nsig = 100      # number of sigma grid points
+
+    mu = np.linspace(-1,1,nmu)              # vector of mu values
+    sig = np.linspace(0.5,1.5,nsig)         # vector of sigma values
+    dmu = mu[1]-mu[0]                       # mu spacing
+    dsig = sig[1]-sig[0]                    # sigma spacing
+    muv, sigv = np.meshgrid(mu, sig)        # combine into meshed variables
+
+    # make data realisation
+    #x = norm.rvs(mu0,sig0,N)
+
+    # compute the likelihood (without normalisation)
+    # for a flat prior on mu and sigma this is also proportional to the posterior
+    sumx = np.sum(x)
+    sumxsq = np.sum(x**2)
+    res = (1.0/sigv**N)*np.exp(-(0.5*N/sigv**2)*(muv-sumx/N)**2)*np.exp(-(0.5/sigv**2)*(sumxsq - (1.0/N)*sumx**2))
+
+    # normalise the posterior
+    res /= (np.sum(res.flatten())*dmu*dsig)
+
+    # compute integrated probability outwards from max point
+    res = res.flatten()
+    idx = np.argsort(res)[::-1]
+    prob = np.zeros(nsig*nmu)
+    prob[idx] = np.cumsum(res[idx])*dmu*dsig
+    prob = prob.reshape(nsig,nmu)
+    res = res.reshape(nsig,nmu)
+    levels=[0.68,0.9,0.95,0.99]
+
+    # plot contours and true value
+    #plt.figure()
+    #plt.contour(mu,sig,prob,levels=[0.68,0.9,0.95,0.99])
+    #plt.plot(mu0,sig0,'+')
+    #plt.savefig('/home/hunter.gabbard/public_html/CBC/cINNamon/gausian/control.png')
+
+    return mu, sig, prob, levels
+
 def main():
     # Set up data
-    batch_size = 8 # set batch size
-    test_split = 10 # number of testing samples to use
-
-    # load in gw templates and signals
-    #signal_train_images, signal_train_pars, signal_image, noise_signal, signal_pars = load_gw_data()
-
-    #for sig in signal_train_images:
-    #    sig += np.random.normal(loc=0.0, scale=n_sig)
-
-    # load in lalinference noise signal
-    #noise_signal = h5py.File("gw_data/data/%s0%s.hdf5" % (event_name,tag),"r")
-    #noise_signal = np.reshape(noise_signal['wht_wvf'][:] * 817.98,(n_pix,1)) # need to not have this hardcoded
 
     # make training signals
     signal_train_pars = []
@@ -524,6 +560,7 @@ def main():
 
     # make random 1D gaussian signal
     noise_signal = np.random.normal(loc=0.0, scale=1.0, size=(1,n_pix))
+    #noise_signal = norm.rvs(0,1.0,(1,n_pix))
     signal_pars = [0.0,1.0]
 
     # load in lalinference samples
@@ -537,10 +574,10 @@ def main():
     pos = torch.tensor(signal_train_pars, dtype=torch.float)
 
     # setting up the model
-    ndim_tot = n_pix*2  # two times the number data dimensions?
+    ndim_tot = n_pix+n_neurons  # two times the number data dimensions?
     ndim_x = 2    # number of parameter dimensions
     ndim_y = n_pix    # number of data dimensions
-    ndim_z = 2    # number of latent space dimensions?
+    ndim_z = 10    # number of latent space dimensions?
 
     # define different parts of the network
     # define input node
@@ -555,26 +592,29 @@ def main():
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
 
+    """
     t3 = Node([t2.out0], rev_multiplicative_layer,
+              {'F_class': F_fully_connected, 'clamp': 2.0,
+               'F_args': {'dropout': 0.2}})
+
+    t4 = Node([t3.out0], rev_multiplicative_layer,
               {'F_class': F_fully_connected, 'clamp': 2.0,
                'F_args': {'dropout': 0.0}})
 
+    """
     # define output layer node
-    outp = OutputNode([t3.out0], name='output')
+    outp = OutputNode([t2.out0], name='output')
 
-    nodes = [inp, t1, t2, t3, outp]
+    nodes = [inp, t1, t2, outp]
     model = ReversibleGraphNet(nodes)
 
     # Train model
-    # Training parameters
-    n_epochs = 50000
-    meta_epoch = 12 # what is this???
-    n_its_per_epoch = 4
-    batch_size = 32
-
     lr = 1e-2
-    gamma = 0.01**(1./120)
+    decayEpochs = (n_epochs * n_its_per_epoch) // meta_epoch
+    gamma = 0.004**(1.0 / decayEpochs)
     l2_reg = 2e-5
+
+    #gamma = 0.01**(1./120)
 
     y_noise_scale = 3e-2     # amount of noise to add to y parameter?
     zeros_noise_scale = 3e-2 # what is this??
@@ -630,20 +670,22 @@ def main():
     #x_samps = torch.cat([x for x,y in test_loader], dim=0)[:N_samp]
     #y_samps = torch.cat([y for x,y in test_loader], dim=0)[:N_samp]
     #y_samps += torch.randn(N_samp, ndim_y) #* y_noise_scale
-    y_samps = torch.tensor(np.repeat(noise_signal, N_samp, axis=0), dtype=torch.float)
+    y_samps_nparray = np.repeat(noise_signal, N_samp, axis=0)
+    y_samps = torch.tensor(y_samps_nparray, dtype=torch.float)
 
     # make test samples. First element is the latent space dimension
     # second element is the extra zeros needed to pad the input.
     # the third element is the time series
     y_samps = torch.cat([torch.randn(N_samp, ndim_z),
-                         torch.zeros(N_samp, ndim_tot - ndim_y - ndim_z), # zeros_noise_scale * 
+                         zeros_noise_scale * torch.zeros(N_samp, ndim_tot - ndim_y - ndim_z), # zeros_noise_scale * 
                          y_samps], dim=1)
     # what we should have now are 1000 copies of the event burried in noise with zero padding up to 2048
     y_samps = y_samps.to(device)
 
+    # get control contour values
+    cont_mu,cont_sig,prob,levels = compute_like(noise_signal.reshape(n_pix,),N=n_pix)
 
-
-    lalinf_post = np.array([np.random.normal(loc=0,scale=1.0,size=(N_samp)), np.random.normal(loc=1.0,scale=1.0,size=(N_samp))])
+    #lalinf_post_blah = np.array([np.random.normal(loc=0,scale=1.0,size=(N_samp)), np.random.normal(loc=1.0,scale=1.0,size=(N_samp))])
 
     # start training loop
     lossf_hist = []
@@ -688,8 +730,14 @@ def main():
                 plot_losses(pe_losses,'%s/latest/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
 
                 # make PE scatter plots with contours and beta score 
-                plt.scatter(rev_x[:,0], rev_x[:,1], s=1., c='red')
-                plt.scatter(signal_pars[0], signal_pars[1], s=50., c='blue', marker='+')
+                mu0=0.0
+                sig0=1.0
+                plt.scatter(rev_x[:,0], rev_x[:,1], s=1., c='red', label='INN Results')
+                plt.contour(cont_mu,cont_sig,prob,levels=[0.68,0.9,0.95,0.99])
+                plt.plot(mu0,sig0,'+', label='Truth')                
+                plt.xlabel('mean')
+                plt.ylabel('standard deviation')
+                plt.legend()
                 plt.savefig('%s/latest/predicted_pe.png' % out_path)
                 plt.close()
         
