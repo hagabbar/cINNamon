@@ -26,23 +26,23 @@ os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 
 # define some global parameters
-event_name = 'gausian'                # event name
+event_name = 'gausian_results'                # event name
 template_dir = 'gw_data/templates/'    # location of training templates directory
 data_dir = 'gw_data/data/'             # data folder location
 tag = '_srate-1024hz_oversamp_python3' # special tag for some files used
 sanity_check_file = 'gw150914_cnn_sanity_check_ts_mass-time-vary_srate-1024hz.sav' # name of file used for checking absolute best performance of CNN
-total_temp_num = 5000000         # total number of gw templates to load
+total_temp_num = 5000         # total number of gw templates to load
 n_sig = 1          # standard deviation of the noise
 do_contours = True # add contours to PE results plot
-plot_cadence = 10
+plot_cadence = 25
 n_pix = 64
 test_split = 10 # number of testing samples to use
 # Training parameters
-n_epochs = 50000
+n_epochs = 100000
 meta_epoch = 12 # what is this???
 n_its_per_epoch = 20 #4
 batch_size = 256 # 1600
-n_neurons = 32 # 1808
+n_neurons = 500 # 1808
 
 
 # load in lalinference converted chirp mass and inverse mass ratio parameters
@@ -53,7 +53,7 @@ n_neurons = 32 # 1808
 #lalinf_pars = pickle_lalinf_pars
 
 # define output path
-out_path = '/home/hunter/CBC/cINNamon/output_files/%s' % event_name
+out_path = '/home/hunter.gabbard/public_html/CBC/cINNamon/%s' % event_name
 # setup output directory - if it does not exist
 os.system('mkdir -p %s' % out_path)
 os.system('mkdir -p %s/latest' % out_path)
@@ -89,8 +89,9 @@ def MMD_multiscale(x, y):
     XX, YY, XY = (torch.zeros(xx.shape).to(device),
                   torch.zeros(xx.shape).to(device),
                   torch.zeros(xx.shape).to(device))
-
-    for a in [0.2, 0.5, 0.9, 1.3]:
+    # 0.2, 0.5, 0.9, 1.3
+    # 50 worked pretty well
+    for a in [50]:
         XX += a**2 * (a**2 + dxx)**-1
         YY += a**2 * (a**2 + dyy)**-1
         XY += a**2 * (a**2 + dxy)**-1
@@ -577,7 +578,7 @@ def main():
     ndim_tot = n_pix+n_neurons  # two times the number data dimensions?
     ndim_x = 2    # number of parameter dimensions
     ndim_y = n_pix    # number of data dimensions
-    ndim_z = 10    # number of latent space dimensions?
+    ndim_z = 2    # number of latent space dimensions?
 
     # define different parts of the network
     # define input node
@@ -612,6 +613,7 @@ def main():
     lr = 1e-2
     decayEpochs = (n_epochs * n_its_per_epoch) // meta_epoch
     gamma = 0.004**(1.0 / decayEpochs)
+    #gamma = 0.25
     l2_reg = 2e-5
 
     #gamma = 0.01**(1./120)
