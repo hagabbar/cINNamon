@@ -1,52 +1,89 @@
 import numpy as np
 import torch
 import torch.utils.data
+import emcee_gauss
 
-verts = [
-         (-2.4142, 1.),
-         (-1., 2.4142),
-         (1.,  2.4142),
-         (2.4142,  1.),
-         (2.4142, -1.),
-         (1., -2.4142),
-         (-1., -2.4142),
-         (-2.4142, -1.)
-        ]
+def generate(tot_dataset_size,model='slope',ndata=8,sigma=0.1,prior_bound=[0,1,0,1],seed=0):
 
-label_maps = {
-              'all':  [0, 1, 2, 3, 4, 5, 6, 7],
-              'some': [0, 0, 0, 0, 1, 1, 2, 3],
-              'none': [0, 0, 0, 0, 0, 0, 0, 0],
-             }
-
-
-def generate(labels, tot_dataset_size):
-    # print('Generating artifical data for setup "%s"' % (labels))
-
-    np.random.seed(0)
+    np.random.seed(seed)
     N = tot_dataset_size
-    mapping = label_maps[labels]
 
-    pos = np.random.normal(size=(N, 2), scale=0.2)
-    labels = np.zeros((N, 8))
-    n = N//8
+    if model=='slope':
 
-    for i, v in enumerate(verts):
-        pos[i*n:(i+1)*n, :] += v
-        labels[i*n:(i+1)*n, mapping[i]] = 1.
+        # draw gradient and intercept from prior
+        pars = np.random.uniform(0,1,size=(N,2))
+        pars[:,0] = prior_bound[0] + (prior_bound[1]-prior_bound[0])*pars[:,0]
+        pars[:,1] = prior_bound[2] + (prior_bound[3]-prior_bound[2])*pars[:,1]
 
+        # make y = mx + c + noise
+        noise = np.random.normal(loc=0.0,scale=sigma,size=(N,ndata))
+        xvec = np.arange(ndata)/float(ndata)
+        sig = np.array([pars[:,0]*x + pars[:,1] for x in xvec]).transpose()
+        data = sig + noise
+        #data = np.array([pars[:,0]*x + pars[:,1] + n for x,n in zip(xvec,noise)]).transpose()
+
+    elif model=='sg':
+
+        # draw gradient and intercept from prior
+        pars = np.random.uniform(0,1,size=(N,2))
+        pars[:,0] = prior_bound[0] + (prior_bound[1]-prior_bound[0])*pars[:,0]
+        pars[:,1] = prior_bound[2] + (prior_bound[3]-prior_bound[2])*pars[:,1]
+        w = 6.0*np.pi
+        p = 1.0
+        tau = 0.25
+
+        # make y = Asin()*exp()  + noise
+        noise = np.random.normal(loc=0.0,scale=sigma,size=(N,ndata))
+        xvec = np.arange(ndata)/float(ndata)
+        sig = np.array([pars[:,0]*np.sin(w*x + p)*np.exp(-((x-pars[:,1])/tau)**2) for x in xvec]).transpose()
+        data = sig + noise
+
+    else:
+        print('Sorry no model of that name')
+        exit(1)
+
+    # randomise the data 
     shuffling = np.random.permutation(N)
-    pos = torch.tensor(pos[shuffling], dtype=torch.float)
-    labels = torch.tensor(labels[shuffling], dtype=torch.float)
+    pars = torch.tensor(pars[shuffling], dtype=torch.float)
+    data = torch.tensor(data[shuffling], dtype=torch.float)
+    sig = torch.tensor(sig[shuffling], dtype=torch.float)
 
-    return pos, labels
+    return pars, data, xvec, sig
 
-    # test_loader = torch.utils.data.DataLoader(
-    #     torch.utils.data.TensorDataset(pos[:test_split], labels[:test_split]),
-    #     batch_size=batch_size, shuffle=True, drop_last=True)
+def get_lik(ydata,n_grid=64,sig_model='sg',sigma=None,xvec=None,bound=[0,1,0,1]):
 
-    # train_loader = torch.utils.data.DataLoader(
-    #     torch.utils.data.TensorDataset(pos[test_split:], labels[test_split:]),
-    #     batch_size=batch_size, shuffle=True, drop_last=True)
+    mcx = np.linspace(bound[0],bound[1],n_grid)              # vector of mu values amplitude
+    mcy = np.linspace(bound[2],bound[3],n_grid)
+    dmcx = mcx[1]-mcx[0]                       # mu spacing
+    dmcy = mcy[1]-mcy[0]
+    mv, cv = np.meshgrid(mcx,mcy)        # combine into meshed variables
 
-    # return test_loader, train_loader
+    res = np.zeros((n_grid,n_grid))
+    if sig_model=='slope':
+        for i,c in enumerate(mcy):
+            res[i,:] = np.array([np.sum(((ydata-m*xvec-c)/sigma)**2) for m in mcx])
+        res = np.exp(-0.5*res)
+    elif sig_model=='sg':
+        w = 6.0*np.pi
+        p = 1.0
+        tau = 0.25
+        for i,t in enumerate(mcy):
+            res[i,:] = np.array([np.sum(((ydata - A*np.sin(w*xvec + p)*np.exp(-((xvec-t)/tau)**2))/sigma)**2) for A in mcx])
+        res = np.exp(-0.5*res)
+
+        # get points sampled from the posterior
+        post_points = emcee_gauss.run(ydata,sigma,xvec,np.log(res))
+
+    # normalise the posterior
+    res /= (np.sum(res.flatten())*dmcx*dmcy)
+
+    # compute integrated probability outwards from max point
+    res = res.flatten()
+    idx = np.argsort(res)[::-1]
+    prob = np.zeros(n_grid*n_grid)
+    prob[idx] = np.cumsum(res[idx])*dmcx*dmcy
+    prob = prob.reshape(n_grid,n_grid)
+    res = res.reshape(n_grid,n_grid)
+    return mcx, mcy, prob
+
+
