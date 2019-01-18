@@ -119,8 +119,8 @@ def run(ydata,sigma,x,loglikelihood):
 
     ndims = inisamples.shape[1] # number of parameters/dimensions
 
-    Nburnin = 500   # number of burn-in samples
-    Nsamples = 500  # number of final posterior samples
+    Nburnin = 25  # number of burn-in samples
+    Nsamples = 25  # number of final posterior samples
 
     # set additional args for the posterior (the data, the noise std. dev., and the abscissa)
     argslist = (ydata, sigma, x)
@@ -140,8 +140,8 @@ def run(ydata,sigma,x,loglikelihood):
     #    sys.exit(1)
 
     print('Number of posterior samples is {}'.format(postsamples.shape[0]))
-    fig = corner.corner(postsamples, labels=[r"$m$", r"$c$"], truths=[0.5, 0.5])
-    fig.savefig('/home/hunter.gabbard/public_html/emcee.png')
+    #fig = corner.corner(postsamples, labels=[r"$m$", r"$c$"], truths=[0.5, 0.5])
+    #fig.savefig('/home/hunter.gabbard/public_html/emcee.png')
 
     # first column is amplitude and second is t0
 

@@ -207,6 +207,64 @@ def make_contour_plot(ax,x,y,dataset,color='red',flip=False, kernel_lalinf=False
 
     return kernel
 
+def overlap_tests(pred_samp,lalinf_samp,true_vals,kernel_cnn,kernel_lalinf):
+    """ Perform Anderson-Darling, K-S, and overlap tests
+    to get quantifiable values for accuracy of GAN
+    PE method
+    Parameters
+    ----------
+    pred_samp: numpy array
+        predicted PE samples from CNN
+    lalinf_samp: numpy array
+        predicted PE samples from lalinference
+    true_vals:
+        true scalar point values for parameters to be estimated (taken from GW event paper)
+    kernel_cnn: scipy kde instance
+        gaussian kde of CNN results
+    kernel_lalinf: scipy kde instance
+        gaussian kde of lalinference results
+    Returns
+    -------
+    ks_score:
+        k-s test score
+    ad_score:
+        anderson-darling score
+    beta_score:
+        overlap score. used to determine goodness of CNN PE estimates
+    """
+
+    # do k-s test
+    ks_mc_score = ks_2samp(pred_samp[:,0].reshape(pred_samp[:,0].shape[0],),lalinf_samp[0][:])
+    ks_q_score = ks_2samp(pred_samp[:,1].reshape(pred_samp[:,1].shape[0],),lalinf_samp[1][:])
+    ks_score = np.array([ks_mc_score,ks_q_score])
+
+    # do anderson-darling test
+    ad_mc_score = anderson_ksamp([pred_samp[:,0].reshape(pred_samp[:,0].shape[0],),lalinf_samp[0][:]])
+    ad_q_score = anderson_ksamp([pred_samp[:,1].reshape(pred_samp[:,1].shape[0],),lalinf_samp[1][:]])
+    ad_score = [ad_mc_score,ad_q_score]
+
+    # compute overlap statistic
+    comb_mc = np.concatenate((pred_samp[:,0].reshape(pred_samp[:,0].shape[0],1),lalinf_samp[0][:].reshape(lalinf_samp[0][:].shape[0],1)))
+    comb_q = np.concatenate((pred_samp[:,1].reshape(pred_samp[:,1].shape[0],1),lalinf_samp[1][:].reshape(lalinf_samp[1][:].shape[0],1)))
+    X, Y = np.mgrid[np.min(comb_mc):np.max(comb_mc):100j, np.min(comb_q):np.max(comb_q):100j]
+    positions = np.vstack([X.ravel(), Y.ravel()])
+    #cnn_pdf = np.reshape(kernel_cnn(positions).T, X.shape)
+    #print(positions.shape,pred_samp.shape)
+    cnn_pdf = kernel_cnn.pdf(positions)
+
+    #X, Y = np.mgrid[np.min(lalinf_samp[0][:]):np.max(lalinf_samp[0][:]):100j, np.min(lalinf_samp[1][:]):np.max(lalinf_samp[1][:]):100j]
+    positions = np.vstack([X.ravel(), Y.ravel()])
+    #lalinf_pdf = np.reshape(kernel_lalinf(positions).T, X.shape)
+    lalinf_pdf = kernel_lalinf.pdf(positions)
+
+    beta_score = np.divide(np.sum( cnn_pdf*lalinf_pdf ),
+                              np.sqrt(np.sum( cnn_pdf**2 ) * 
+                              np.sum( lalinf_pdf**2 )))
+    
+
+    return ks_score, ad_score, beta_score
+
+
 def main():
 
     # Set up simulation parameters
@@ -221,6 +279,7 @@ def main():
     out_dir = '/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/'
     n_neurons = 0
     do_contours = True # if True, plot contours of predictions by INN
+    plot_cadence = 50
 
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
@@ -228,7 +287,7 @@ def main():
     # generate data
     pos, labels, x, sig = data.generate(
         model=sig_model,
-        tot_dataset_size=int(1e6),
+        tot_dataset_size=int(1e7),
         ndata=ndata,
         sigma=sigma,
         prior_bound=bound,
@@ -334,21 +393,22 @@ def main():
     fig, axes = plt.subplots(r,r,figsize=(6,6))
 
     # number of test samples to use after training 
-    N_samp = 1024
+    N_samp = 2500
 
     # precompute true likelihood on the test data
     Ngrid = 64 
     cnt = 0
     lik = np.zeros((r,r,Ngrid*Ngrid))
-    true_post = np.zeros((r,r,2))
+    true_post = np.zeros((r,r,N_samp,2))
 
     for i in range(r):
         for j in range(r):
-            mvec,cvec,temp = data.get_lik(np.array(labels_test[cnt,:]).flatten(),n_grid=Ngrid,sig_model=sig_model,sigma=sigma,xvec=x,bound=bound)
+            mvec,cvec,temp,post_points = data.get_lik(np.array(labels_test[cnt,:]).flatten(),n_grid=Ngrid,sig_model=sig_model,sigma=sigma,xvec=x,bound=bound)
             lik[i,j,:] = temp.flatten()
+            true_post[i,j,:] = post_points[:N_samp]
             cnt += 1
 
-    # start training loop            
+    # start training loop
     try:
         t_start = time()
         # loop over number of epochs
@@ -370,46 +430,51 @@ def main():
 
             # loop over a few cases and plot results in a grid
             cnt = 0
-            for i in range(r):
-                for j in range(r):
+            if ((i_epoch % plot_cadence == 0) & (i_epoch>0)):
+                for i in range(r):
+                    for j in range(r):
 
-                    # convert data into correct format
-                    y_samps = np.tile(np.array(labels_test[cnt,:]),N_samp).reshape(N_samp,ndim_y)
-                    y_samps = torch.tensor(y_samps, dtype=torch.float)
-                    #y_samps += y_noise_scale * torch.randn(N_samp, ndim_y)
-                    y_samps = torch.cat([torch.randn(N_samp, ndim_z), #zeros_noise_scale * 
-                        torch.zeros(N_samp, ndim_tot - ndim_y - ndim_z),
-                        y_samps], dim=1)
-                    y_samps = y_samps.to(device)
+                        # convert data into correct format
+                        y_samps = np.tile(np.array(labels_test[cnt,:]),N_samp).reshape(N_samp,ndim_y)
+                        y_samps = torch.tensor(y_samps, dtype=torch.float)
+                        #y_samps += y_noise_scale * torch.randn(N_samp, ndim_y)
+                        y_samps = torch.cat([torch.randn(N_samp, ndim_z), #zeros_noise_scale * 
+                            torch.zeros(N_samp, ndim_tot - ndim_y - ndim_z),
+                            y_samps], dim=1)
+                        y_samps = y_samps.to(device)
 
-                    # use the network to predict parameters
-                    rev_x = model(y_samps, rev=True)
-                    rev_x = rev_x.cpu().data.numpy()
+                        # use the network to predict parameters
+                        rev_x = model(y_samps, rev=True)
+                        rev_x = rev_x.cpu().data.numpy()
  
-                    # plot the samples and the true contours
-                    axes[i,j].clear()
-                    axes[i,j].contour(mvec,cvec,lik[i,j,:].reshape(Ngrid,Ngrid),levels=[0.68,0.9,0.99])
-                    axes[i,j].scatter(rev_x[:,0], rev_x[:,1],s=0.5,alpha=0.5,color='red')
-                    #axes[i,j].scatter(mvec,cvec,s=0.5,alpha=0.5,color='blue')
-                    axes[i,j].plot(pos_test[cnt,0],pos_test[cnt,1],'+r',markersize=8)
-                    axes[i,j].axis(bound)
+                        # plot the samples and the true contours
+                        axes[i,j].clear()
+                        axes[i,j].contour(mvec,cvec,lik[i,j,:].reshape(Ngrid,Ngrid),levels=[0.68,0.9,0.99])
+                        axes[i,j].scatter(rev_x[:,0], rev_x[:,1],s=0.5,alpha=0.5,color='red')
+                        axes[i,j].scatter(true_post[i,j,:,1],true_post[i,j,:,0],s=0.5,alpha=0.5,color='blue')
+                        axes[i,j].plot(pos_test[cnt,0],pos_test[cnt,1],'+r',markersize=8)
+                        axes[i,j].axis(bound)
 
-                    # add contours to results
-                    #try:
-                    if do_contours:
-                        contour_y = np.reshape(rev_x[:,1], (rev_x[:,1].shape[0]))
-                        contour_x = np.reshape(rev_x[:,0], (rev_x[:,0].shape[0]))
-                        contour_dataset = np.array([contour_x,contour_y])
-                        kernel_cnn = make_contour_plot(axes[i,j],contour_x,contour_y,contour_dataset,'red',flip=False, kernel_cnn=False)
-                    #except ValueError:
-                    #    pass
+                        # add contours to results
+                        if do_contours:
+                            contour_y = np.reshape(rev_x[:,1], (rev_x[:,1].shape[0]))
+                            contour_x = np.reshape(rev_x[:,0], (rev_x[:,0].shape[0]))
+                            contour_dataset = np.array([contour_x,contour_y])
+                            kernel_cnn = make_contour_plot(axes[i,j],contour_x,contour_y,contour_dataset,'red',flip=False, kernel_cnn=False)
+                     
+                            # run overlap tests on results
+                            contour_y = np.reshape(true_post[i,j][:,1], (true_post[i,j][:,1].shape[0]))
+                            contour_x = np.reshape(true_post[i,j][:,0], (true_post[i,j][:,0].shape[0]))
+                            contour_dataset = np.array([contour_x,contour_y])
+                            ks_score, ad_score, beta_score = overlap_tests(rev_x,true_post[i,j],pos_test[cnt],kernel_cnn,gaussian_kde(contour_dataset))
+                            axes[i,j].legend(['Overlap: %s' % str(np.round(beta_score,3))])    
 
-                    cnt += 1
+                        cnt += 1
 
-            # sve the results to file
-            fig.canvas.draw()
-            plt.savefig('%sposteriors_%s.png' % (out_dir,i_epoch),dpi=360)
-            plt.savefig('%slatest.png' % out_dir,dpi=360)
+                # sve the results to file
+                fig.canvas.draw()
+                plt.savefig('%sposteriors_%s.png' % (out_dir,i_epoch),dpi=360)
+                plt.savefig('%slatest.png' % out_dir,dpi=360)
 
     except KeyboardInterrupt:
         pass

@@ -84,6 +84,6 @@ def get_lik(ydata,n_grid=64,sig_model='sg',sigma=None,xvec=None,bound=[0,1,0,1])
     prob[idx] = np.cumsum(res[idx])*dmcx*dmcy
     prob = prob.reshape(n_grid,n_grid)
     res = res.reshape(n_grid,n_grid)
-    return mcx, mcy, prob
+    return mcx, mcy, prob, post_points
 
 
