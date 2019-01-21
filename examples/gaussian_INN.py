@@ -136,7 +136,7 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         #                              l_tot / batch_idx,
         #                            ), flush=True)
 
-    return l_tot / batch_idx
+    return l_tot / batch_idx, l, l_rev
 
     target3 = norm*contour3
 
@@ -264,6 +264,48 @@ def overlap_tests(pred_samp,lalinf_samp,true_vals,kernel_cnn,kernel_lalinf):
 
     return ks_score, ad_score, beta_score
 
+def plot_losses(losses,filename,logscale=False,legend=None):
+    """ Make loss and accuracy plots and output to file.
+    Plot with x and y log-axes is desired
+    Parameters
+    ----------
+    losses: list
+        list containing history of network loss and accuracy values
+    filename: string
+        string which specifies location of output directory and filename
+    logscale: boolean
+        if True: use logscale in plots, if False: do not use
+    legend: boolean
+        if True: apply legend, if False: do not
+    """
+    # plot forward pass loss
+    fig = plt.figure()
+    losses = np.array(losses)
+    ax1 = fig.add_subplot(211)	
+    ax1.plot(losses[0],'b')
+    ax1.set_xlabel(r'epoch')
+    ax1.set_ylabel(r'loss')
+    if legend is not None:
+    	ax1.legend('forward pass',loc='upper left')
+    
+    # plot backward pass loss
+    ax2 = fig.add_subplot(212)
+    ax2.plot(losses[1],'r')
+
+    # rescale axis using a logistic function so that we see more detail
+    # close to 0 and close 1
+    ax2.set_xlabel(r'epoch')
+    ax2.set_ylabel(r'loss')
+    if legend is not None:
+        ax2.legend('backward pass',loc='upper left')
+    if logscale==True:
+        ax1.set_xscale("log", nonposx='clip')
+        ax1.set_yscale("log", nonposy='clip')
+        ax2.set_xscale("log", nonposx='clip')
+        ax2.set_yscale("log", nonposy='clip')
+    plt.savefig(filename)
+    plt.close('all')
+
 
 def main():
 
@@ -279,7 +321,7 @@ def main():
     out_dir = '/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/'
     n_neurons = 0
     do_contours = True # if True, plot contours of predictions by INN
-    plot_cadence = 50
+    plot_cadence = 200
 
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
@@ -301,7 +343,7 @@ def main():
 
     # plot the test data examples
     plt.figure(figsize=(6,6))
-    fig, axes = plt.subplots(r,r,figsize=(6,6))
+    fig_post, axes = plt.subplots(r,r,figsize=(6,6))
     cnt = 0
     for i in range(r):
         for j in range(r):
@@ -315,7 +357,7 @@ def main():
     # setting up the model 
     ndim_x = 2        # number of posterior parameter dimensions (x,y)
     ndim_y = ndata    # number of label dimensions (noisy data samples)
-    ndim_z = 8        # number of latent space dimensions?
+    ndim_z = 16        # number of latent space dimensions?
     ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons     # must be > ndim_x and > ndim_y + ndim_z
 
     # define different parts of the network
@@ -343,7 +385,7 @@ def main():
 
     # Train model
     # Training parameters
-    n_epochs = 1000
+    n_epochs = 10000
     meta_epoch = 12 # what is this???
     n_its_per_epoch = 12
     batch_size = 1600
@@ -400,6 +442,9 @@ def main():
     cnt = 0
     lik = np.zeros((r,r,Ngrid*Ngrid))
     true_post = np.zeros((r,r,N_samp,2))
+    lossf_hist = []
+    lossrev_hist = []
+    beta_score_hist = []
 
     for i in range(r):
         for j in range(r):
@@ -424,13 +469,21 @@ def main():
                     param_group['lr'] = lr * 1e-2
 
             # train the model
-            train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,
+            losstot, lossf, lossrev = train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,
                 ndim_tot,ndim_x,ndim_y,ndim_z,y_noise_scale,optimizer,lambd_predict,
                 loss_fit,lambd_latent,loss_latent,lambd_rev,loss_backward,i_epoch)
 
+            # append current loss value to loss histories
+            lossf_hist.append(losstot)
+            lossrev_hist.append(lossrev.item())
+            pe_losses = [lossf_hist,lossrev_hist]
+
             # loop over a few cases and plot results in a grid
             cnt = 0
+            beta_max = 0
             if ((i_epoch % plot_cadence == 0) & (i_epoch>0)):
+                # initialize plot for showing testing results
+                fig, axes = plt.subplots(r,r,figsize=(6,6))
                 for i in range(r):
                     for j in range(r):
 
@@ -463,18 +516,23 @@ def main():
                             kernel_cnn = make_contour_plot(axes[i,j],contour_x,contour_y,contour_dataset,'red',flip=False, kernel_cnn=False)
                      
                             # run overlap tests on results
-                            contour_y = np.reshape(true_post[i,j][:,1], (true_post[i,j][:,1].shape[0]))
-                            contour_x = np.reshape(true_post[i,j][:,0], (true_post[i,j][:,0].shape[0]))
+                            contour_x = np.reshape(true_post[i,j][:,1], (true_post[i,j][:,1].shape[0]))
+                            contour_y = np.reshape(true_post[i,j][:,0], (true_post[i,j][:,0].shape[0]))
                             contour_dataset = np.array([contour_x,contour_y])
                             ks_score, ad_score, beta_score = overlap_tests(rev_x,true_post[i,j],pos_test[cnt],kernel_cnn,gaussian_kde(contour_dataset))
                             axes[i,j].legend(['Overlap: %s' % str(np.round(beta_score,3))])    
+                            
+                            beta_score_hist.append([beta_score])
 
                         cnt += 1
 
                 # sve the results to file
-                fig.canvas.draw()
+                fig_post.canvas.draw()
                 plt.savefig('%sposteriors_%s.png' % (out_dir,i_epoch),dpi=360)
                 plt.savefig('%slatest.png' % out_dir,dpi=360)
+
+                plot_losses(pe_losses,'%spe_losses.png' % out_dir,legend=['PE-GEN'])
+                plot_losses(pe_losses,'%spe_losses_logscale.png' % out_dir,logscale=True,legend=['PE-GEN'])
 
     except KeyboardInterrupt:
         pass
