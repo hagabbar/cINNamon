@@ -1,2 +1,2 @@
 # cINNamon
-Inverse neural network for gravitational wave parameter estimation
+Invertible neural network for gravitational wave parameter estimation
