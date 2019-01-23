@@ -346,7 +346,7 @@ def main():
     out_dir = "results/"
     n_neurons = 0
     do_contours = True # if True, plot contours of predictions by INN
-    plot_cadence = 25
+    plot_cadence = 50
 
     # setup output directory - if it does not exist
     #os.system('mkdir -p %s' % out_dir)
@@ -354,12 +354,16 @@ def main():
     # generate data
     pos, labels, x, sig = data.generate(
         model=sig_model,
-        tot_dataset_size=int(1e5),
+        tot_dataset_size=int(1e4), # 1e5
         ndata=ndata,
         sigma=sigma,
         prior_bound=bound,
         seed=seed
     )
+
+    # calculate mode of x-space for both pars
+    mode_1 = stats.mode(np.array(pos[:,0]))
+    mode_2 = stats.mode(np.array(pos[:,1]))
 
     # seperate the test data for plotting
     pos_test = pos[-test_split:]
@@ -456,9 +460,6 @@ def main():
                 coeff.fc3.weight.data = 0.01*torch.randn(coeff.fc3.weight.shape)
     model.to(device)
 
-    # initialize plot for showing testing results
-    fig, axes = plt.subplots(r,r,figsize=(6,6))
-
     # number of test samples to use after training 
     N_samp = 2500
 
@@ -511,6 +512,56 @@ def main():
             cnt = 0
             beta_max = 0
             if ((i_epoch % plot_cadence == 0) & (i_epoch>0)):
+                # use the network to predict parameters\
+
+                # do latent space structure plotting
+                y_samps_latent = np.tile(np.array(labels_test[0,:]),1).reshape(1,ndim_y)
+                y_samps_latent = torch.tensor(y_samps_latent, dtype=torch.float)
+                x1_i_dist = []
+                x2_i_dist = []
+                x1_i_par = np.array([])
+                x2_i_par = np.array([])
+
+                for z_i in range(10000):
+                    x_i = model(torch.cat([torch.randn(1, ndim_z), 
+                    torch.zeros(1, ndim_tot - ndim_y - ndim_z),
+                    y_samps_latent], dim=1).to(device), rev=True)
+                    x_i = x_i.cpu().data.numpy()
+                    
+                    # calculate hue and intensity
+                    if np.abs(mode_1[0][0] - x_i[0][0]) < np.abs(mode_2[0][0] - x_i[0][1]):
+                        x1_i_par = np.vstack([x1_i_par,x_i[0]]) if x1_i_par.size else x_i[0]
+                        x1_i_dist.append([np.abs(mode_1[0][0] - x_i[0][0])])
+
+                    else:
+                        x2_i_par = np.vstack([x2_i_par,x_i[0]]) if x2_i_par.size else x_i[0]
+                        x2_i_dist.append([np.abs(mode_2[0][0] - x_i[0][1])])
+                        
+                x1_i_dist[:] = x1_i_dist[:] / np.max(x1_i_dist[:])
+                x2_i_dist[:] = x2_i_dist[:] / np.max(x2_i_dist[:])
+
+                #print(x1_i_par[:,0].shape, x1_i_par[:,1].shape, np.array(x1_i_dist).reshape(len(x1_i_dist)).shape)
+                #exit()
+                bg_color = 'black'
+                fg_color = 'red'
+
+                fig = plt.figure(facecolor=bg_color, edgecolor=fg_color)
+                axes = fig.add_subplot(111)
+                axes.patch.set_facecolor(bg_color)
+                axes.xaxis.set_tick_params(color=fg_color, labelcolor=fg_color)
+                axes.yaxis.set_tick_params(color=fg_color, labelcolor=fg_color)
+                for spine in axes.spines.values():
+                    spine.set_color(fg_color)
+                plt.scatter(x1_i_par[:,0], x1_i_par[:,1], s=1, c=np.array(x1_i_dist).reshape(len(x1_i_dist)), cmap='Greens', axes=axes)
+                plt.scatter(x2_i_par[:,0], x2_i_par[:,1], s=1, c=np.array(x2_i_dist).reshape(len(x2_i_dist)), cmap='Purples', axes=axes)
+                plt.xlabel('Amplitude', color=fg_color)
+                plt.ylabel('Phase', color=fg_color)
+                plt.savefig('%sstruct_z.png' % out_dir, dpi=360)
+                plt.close()
+
+                # end of latent space structure plotting
+                
+
                 # initialize plot for showing testing results
                 fig, axes = plt.subplots(r,r,figsize=(6,6))
                 for i in range(r):
@@ -525,7 +576,6 @@ def main():
                             y_samps], dim=1)
                         y_samps = y_samps.to(device)
 
-                        # use the network to predict parameters
                         rev_x = model(y_samps, rev=True)
                         rev_x = rev_x.cpu().data.numpy()
  
