@@ -90,11 +90,13 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         y_short = torch.cat((y[:, :ndim_z], y[:, -ndim_y:]), dim=1)
 
         l = lambd_predict * loss_fit(output[:, ndim_z:], y[:, ndim_z:])
+        l_forward = l
 
         output_block_grad = torch.cat((output[:, :ndim_z],
                                        output[:, -ndim_y:].data), dim=1)
 
-        l += lambd_latent * loss_latent(output_block_grad, y_short)
+        l_latent = loss_latent(output_block_grad, y_short)
+        l += lambd_latent * l_latent
         l_tot += l.data.item()
 
         l.backward()
@@ -136,7 +138,7 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         #                              l_tot / batch_idx,
         #                            ), flush=True)
 
-    return l_tot / batch_idx, l, l_rev
+    return l_tot / batch_idx, l_latent, l_rev, l_forward
 
     target3 = norm*contour3
 
@@ -277,32 +279,55 @@ def plot_losses(losses,filename,logscale=False,legend=None):
         if True: use logscale in plots, if False: do not use
     legend: boolean
         if True: apply legend, if False: do not
+    pe_losses = [losstot_hist, losslatent_hist, lossrev_hist, lossf_hist]
     """
     # plot forward pass loss
     fig = plt.figure()
     losses = np.array(losses)
-    ax1 = fig.add_subplot(211)	
-    ax1.plot(losses[0],'b')
+    ax1 = fig.add_subplot(411)	
+    ax1.plot(losses[0],'b', label='Total')
     ax1.set_xlabel(r'epoch')
     ax1.set_ylabel(r'loss')
     if legend is not None:
-    	ax1.legend('forward pass',loc='upper left')
+    	ax1.legend(loc='upper left')
     
     # plot backward pass loss
-    ax2 = fig.add_subplot(212)
-    ax2.plot(losses[1],'r')
-
+    ax2 = fig.add_subplot(412)
+    ax2.plot(losses[1],'r', label='latent')
     # rescale axis using a logistic function so that we see more detail
     # close to 0 and close 1
     ax2.set_xlabel(r'epoch')
     ax2.set_ylabel(r'loss')
     if legend is not None:
-        ax2.legend('backward pass',loc='upper left')
+        ax2.legend(loc='upper left')
+
+    ax3 = fig.add_subplot(413)
+    ax3.plot(losses[2],'g', label='reversible')
+    # rescale axis using a logistic function so that we see more detail
+    # close to 0 and close 1
+    ax3.set_xlabel(r'epoch')
+    ax3.set_ylabel(r'loss')
+    if legend is not None:
+        ax3.legend(loc='upper left')
+
+    ax4 = fig.add_subplot(414)
+    ax4.plot(losses[3],'cyan', label='forward')
+    # rescale axis using a logistic function so that we see more detail
+    # close to 0 and close 1
+    ax4.set_xlabel(r'epoch')
+    ax4.set_ylabel(r'loss')
+    if legend is not None:
+        ax4.legend(loc='upper left')
+
     if logscale==True:
         ax1.set_xscale("log", nonposx='clip')
         ax1.set_yscale("log", nonposy='clip')
         ax2.set_xscale("log", nonposx='clip')
         ax2.set_yscale("log", nonposy='clip')
+        ax3.set_xscale("log", nonposx='clip')
+        ax3.set_yscale("log", nonposy='clip')
+        ax4.set_xscale("log", nonposx='clip')
+        ax4.set_yscale("log", nonposy='clip')
     plt.savefig(filename)
     plt.close('all')
 
@@ -318,18 +343,18 @@ def main():
     ndata = 32         # number of data samples in time series
     bound = [0.0,1.0,0.0,1.0]         # effective bound for likelihood
     seed = 1           # seed for generating data
-    out_dir = '/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/'
+    out_dir = "results/"
     n_neurons = 0
     do_contours = True # if True, plot contours of predictions by INN
-    plot_cadence = 200
+    plot_cadence = 25
 
     # setup output directory - if it does not exist
-    os.system('mkdir -p %s' % out_dir)
+    #os.system('mkdir -p %s' % out_dir)
 
     # generate data
     pos, labels, x, sig = data.generate(
         model=sig_model,
-        tot_dataset_size=int(1e7),
+        tot_dataset_size=int(1e5),
         ndata=ndata,
         sigma=sigma,
         prior_bound=bound,
@@ -351,13 +376,13 @@ def main():
             axes[i,j].plot(x,np.array(sig_test[cnt,:]),'-')
             cnt += 1
             axes[i,j].axis([0,1,-1.5,1.5])
-    plt.savefig('%stest_distribution.png' % out_dir,dpi=360)
+    plt.savefig("%stest_distribution.png" % out_dir,dpi=360)
     plt.close()
 
     # setting up the model 
     ndim_x = 2        # number of posterior parameter dimensions (x,y)
     ndim_y = ndata    # number of label dimensions (noisy data samples)
-    ndim_z = 16        # number of latent space dimensions?
+    ndim_z = 8        # number of latent space dimensions?
     ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons     # must be > ndim_x and > ndim_y + ndim_z
 
     # define different parts of the network
@@ -444,6 +469,8 @@ def main():
     true_post = np.zeros((r,r,N_samp,2))
     lossf_hist = []
     lossrev_hist = []
+    losstot_hist = []
+    losslatent_hist = []
     beta_score_hist = []
 
     for i in range(r):
@@ -469,14 +496,16 @@ def main():
                     param_group['lr'] = lr * 1e-2
 
             # train the model
-            losstot, lossf, lossrev = train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,
+            losstot, losslatent, lossrev, lossf = train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,
                 ndim_tot,ndim_x,ndim_y,ndim_z,y_noise_scale,optimizer,lambd_predict,
                 loss_fit,lambd_latent,loss_latent,lambd_rev,loss_backward,i_epoch)
 
             # append current loss value to loss histories
-            lossf_hist.append(losstot)
-            lossrev_hist.append(lossrev.item())
-            pe_losses = [lossf_hist,lossrev_hist]
+            lossf_hist.append(lossf.data.item())
+            lossrev_hist.append(lossrev.data.item())
+            losstot_hist.append(losstot)
+            losslatent_hist.append(losslatent.data.item())
+            pe_losses = [losstot_hist, losslatent_hist, lossrev_hist, lossf_hist]
 
             # loop over a few cases and plot results in a grid
             cnt = 0
