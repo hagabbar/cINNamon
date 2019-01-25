@@ -15,7 +15,7 @@ from scipy import stats
 from scipy.signal import butter, lfilter, freqs, resample
 
 from FrEIA.framework import InputNode, OutputNode, Node, ReversibleGraphNet
-from FrEIA.modules import rev_multiplicative_layer, F_fully_connected
+from FrEIA.modules import rev_multiplicative_layer, F_fully_connected, F_conv
 
 import data as data
 
@@ -48,7 +48,7 @@ def MMD_multiscale(x, y):
 def fit(input, target):
     return torch.mean((input - target)**2)
 
-def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_tot,ndim_x,ndim_y,ndim_z,y_noise_scale,optimizer,lambd_predict,loss_fit,lambd_latent,loss_latent,lambd_rev,loss_backward,i_epoch=0):
+def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_tot,ndim_x,ndim_y,ndim_z,y_noise_scale,optimizer,lambd_predict,loss_fit,lambd_latent,loss_latent,lambd_rev,loss_backward,conv_nn,i_epoch=0):
     model.train()
 
     l_tot = 0
@@ -83,7 +83,7 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         optimizer.zero_grad()
 
         # Forward step:
-
+        if conv_nn == True: x = x.reshape(x.shape[0],x.shape[1],1,1)
         output = model(x)
 
         # Shorten output, and remove gradients wrt y, for latent loss
@@ -95,6 +95,7 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         output_block_grad = torch.cat((output[:, :ndim_z],
                                        output[:, -ndim_y:].data), dim=1)
 
+        if conv_nn == True: output_block_grad=output_block_grad.reshape(output_block_grad.shape[0],output_block_grad.shape[1]) 
         l_latent = loss_latent(output_block_grad, y_short)
         l += lambd_latent * l_latent
         l_tot += l.data.item()
@@ -106,6 +107,7 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
                                                  ndim_y - ndim_z, device=device)
         y = y_clean + y_noise_scale * torch.randn(batch_size, ndim_y, device=device)
 
+        if conv_nn == True: output = output.reshape(output.shape[0],output.shape[1])
         orig_z_perturbed = (output.data[:, :ndim_z] + y_noise_scale *
                             torch.randn(batch_size, ndim_z, device=device))
         y_rev = torch.cat((orig_z_perturbed, pad_yz,
@@ -113,9 +115,14 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         y_rev_rand = torch.cat((torch.randn(batch_size, ndim_z, device=device), pad_yz,
                                 y), dim=1)
 
+        if conv_nn == True: y_rev=y_rev.reshape(y_rev.shape[0],y_rev.shape[1],1,1)
+        if conv_nn == True: y_rev_rand=y_rev_rand.reshape(y_rev_rand.shape[0],y_rev_rand.shape[1],1,1)
         output_rev = model(y_rev, rev=True)
         output_rev_rand = model(y_rev_rand, rev=True)
 
+        if conv_nn == True: output_rev=output_rev.reshape(output_rev.shape[0],output_rev.shape[1])
+        if conv_nn == True: output_rev_rand=output_rev_rand.reshape(output_rev_rand.shape[0],output_rev_rand.shape[1])
+        if conv_nn == True: x = x.reshape(x.shape[0],x.shape[1])
         l_rev = (
             lambd_rev
             * loss_factor
@@ -340,30 +347,33 @@ def main():
     test_split = r*r   # number of testing samples to use
     sig_model = 'sg'   # the signal model to use
     sigma = 0.2        # the noise std
-    ndata = 32         # number of data samples in time series
+    ndata = 8         #32 number of data samples in time series
     bound = [0.0,1.0,0.0,1.0]         # effective bound for likelihood
     seed = 1           # seed for generating data
-    out_dir = "results/"
+    out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/"
     n_neurons = 0
     do_contours = True # if True, plot contours of predictions by INN
-    plot_cadence = 50
+    plot_cadence = 25
+    do_latent_struc = False # if True, plot latent space 2D structure
+    conv_nn = True # if True, use convolutional nn structure
 
     # setup output directory - if it does not exist
-    #os.system('mkdir -p %s' % out_dir)
+    os.system('mkdir -p %s' % out_dir)
 
     # generate data
     pos, labels, x, sig = data.generate(
         model=sig_model,
-        tot_dataset_size=int(1e4), # 1e5
+        tot_dataset_size=int(1e6), # 1e6
         ndata=ndata,
         sigma=sigma,
         prior_bound=bound,
         seed=seed
     )
 
-    # calculate mode of x-space for both pars
-    mode_1 = stats.mode(np.array(pos[:,0]))
-    mode_2 = stats.mode(np.array(pos[:,1]))
+    if do_latent_struc:
+        # calculate mode of x-space for both pars
+        mode_1 = stats.mode(np.array(pos[:,0]))
+        mode_2 = stats.mode(np.array(pos[:,1]))
 
     # seperate the test data for plotting
     pos_test = pos[-test_split:]
@@ -386,7 +396,7 @@ def main():
     # setting up the model 
     ndim_x = 2        # number of posterior parameter dimensions (x,y)
     ndim_y = ndata    # number of label dimensions (noisy data samples)
-    ndim_z = 8        # number of latent space dimensions?
+    ndim_z = 2        # number of latent space dimensions?
     ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons     # must be > ndim_x and > ndim_y + ndim_z
 
     # define different parts of the network
@@ -394,17 +404,18 @@ def main():
     inp = InputNode(ndim_tot, name='input')
 
     # define hidden layer nodes
-    t1 = Node([inp.out0], rev_multiplicative_layer,
-              {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.0}})
+    if conv_nn == True:
+        t1 = Node([inp.out0], rev_multiplicative_layer,
+                  {'F_class': F_conv, 'clamp': 2.0,
+                   'F_args':{}})
 
-    t2 = Node([t1.out0], rev_multiplicative_layer,
-              {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.0}})
+        t2 = Node([t1.out0], rev_multiplicative_layer,
+                  {'F_class': F_conv, 'clamp': 2.0,
+                   'F_args':{}})
 
-    t3 = Node([t2.out0], rev_multiplicative_layer,
-              {'F_class': F_fully_connected, 'clamp': 2.0,
-               'F_args': {'dropout': 0.0}})
+        t3 = Node([t2.out0], rev_multiplicative_layer,
+                  {'F_class': F_conv, 'clamp': 2.0,
+                   'F_args':{}})
 
     # define output layer node
     outp = OutputNode([t3.out0], name='output')
@@ -457,7 +468,7 @@ def main():
     for mod_list in model.children():
         for block in mod_list.children():
             for coeff in block.children():
-                coeff.fc3.weight.data = 0.01*torch.randn(coeff.fc3.weight.shape)
+                if conv_nn == True: coeff.conv3.weight.data = 0.01*torch.randn(coeff.conv3.weight.shape)
     model.to(device)
 
     # number of test samples to use after training 
@@ -499,7 +510,7 @@ def main():
             # train the model
             losstot, losslatent, lossrev, lossf = train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,
                 ndim_tot,ndim_x,ndim_y,ndim_z,y_noise_scale,optimizer,lambd_predict,
-                loss_fit,lambd_latent,loss_latent,lambd_rev,loss_backward,i_epoch)
+                loss_fit,lambd_latent,loss_latent,lambd_rev,loss_backward,conv_nn,i_epoch)
 
             # append current loss value to loss histories
             lossf_hist.append(lossf.data.item())
@@ -513,51 +524,59 @@ def main():
             beta_max = 0
             if ((i_epoch % plot_cadence == 0) & (i_epoch>0)):
                 # use the network to predict parameters\
+                
+                if do_latent_struc:
+                    # do latent space structure plotting
+                    y_samps_latent = np.tile(np.array(labels_test[0,:]),1).reshape(1,ndim_y)
+                    y_samps_latent = torch.tensor(y_samps_latent, dtype=torch.float)
+                    x1_i_dist = []
+                    x2_i_dist = []
+                    x1_i_par = np.array([])
+                    x2_i_par = np.array([])
 
-                # do latent space structure plotting
-                y_samps_latent = np.tile(np.array(labels_test[0,:]),1).reshape(1,ndim_y)
-                y_samps_latent = torch.tensor(y_samps_latent, dtype=torch.float)
-                x1_i_dist = []
-                x2_i_dist = []
-                x1_i_par = np.array([])
-                x2_i_par = np.array([])
+                    # define latent space mesh grid
+                    z_mesh = np.mgrid[-0.99:-0.01:100j, -0.99:-0.01:100j]
+                    z_mesh = np.vstack([z_mesh,np.zeros((2,100,100))])
 
-                for z_i in range(10000):
-                    x_i = model(torch.cat([torch.randn(1, ndim_z), 
-                    torch.zeros(1, ndim_tot - ndim_y - ndim_z),
-                    y_samps_latent], dim=1).to(device), rev=True)
-                    x_i = x_i.cpu().data.numpy()
+                    #for z_i in range(10000):
+                    for i in range(z_mesh.shape[1]):
+                        for j in range(z_mesh.shape[2]):
+                            a = torch.randn(1,ndim_z)
+                            a[0,0] = z_mesh[0,i,j]
+                            a[0,1] = z_mesh[1,i,j]
+                            x_i = model(torch.cat([a, 
+                            torch.zeros(1, ndim_tot - ndim_y - ndim_z),
+                            y_samps_latent], dim=1).to(device), rev=True)
+                            x_i = x_i.cpu().data.numpy()
                     
-                    # calculate hue and intensity
-                    if np.abs(mode_1[0][0] - x_i[0][0]) < np.abs(mode_2[0][0] - x_i[0][1]):
-                        x1_i_par = np.vstack([x1_i_par,x_i[0]]) if x1_i_par.size else x_i[0]
-                        x1_i_dist.append([np.abs(mode_1[0][0] - x_i[0][0])])
+                            # calculate hue and intensity
+                            if np.abs(mode_1[0][0] - x_i[0][0]) < np.abs(mode_2[0][0] - x_i[0][1]):
+                                z_mesh[2,i,j] = np.abs(mode_1[0][0] - x_i[0][0])
+                                z_mesh[3,i,j] = 0
 
-                    else:
-                        x2_i_par = np.vstack([x2_i_par,x_i[0]]) if x2_i_par.size else x_i[0]
-                        x2_i_dist.append([np.abs(mode_2[0][0] - x_i[0][1])])
+                            else:
+                                z_mesh[2,i,j] = np.abs(mode_2[0][0] - x_i[0][1])
+                                z_mesh[3,i,j] = 1 
                         
-                x1_i_dist[:] = x1_i_dist[:] / np.max(x1_i_dist[:])
-                x2_i_dist[:] = x2_i_dist[:] / np.max(x2_i_dist[:])
+                    z_mesh[2,:,:][z_mesh[3,:,:] == 0] = z_mesh[2,:,:][z_mesh[3,:,:] == 0] / np.max(z_mesh[2,:,:][z_mesh[3,:,:] == 0])
+                    z_mesh[2,:,:][z_mesh[3,:,:] == 1] = z_mesh[2,:,:][z_mesh[3,:,:] == 1] / np.max(z_mesh[2,:,:][z_mesh[3,:,:] == 1])
 
-                #print(x1_i_par[:,0].shape, x1_i_par[:,1].shape, np.array(x1_i_dist).reshape(len(x1_i_dist)).shape)
-                #exit()
-                bg_color = 'black'
-                fg_color = 'red'
+                    bg_color = 'black'
+                    fg_color = 'red'
 
-                fig = plt.figure(facecolor=bg_color, edgecolor=fg_color)
-                axes = fig.add_subplot(111)
-                axes.patch.set_facecolor(bg_color)
-                axes.xaxis.set_tick_params(color=fg_color, labelcolor=fg_color)
-                axes.yaxis.set_tick_params(color=fg_color, labelcolor=fg_color)
-                for spine in axes.spines.values():
-                    spine.set_color(fg_color)
-                plt.scatter(x1_i_par[:,0], x1_i_par[:,1], s=1, c=np.array(x1_i_dist).reshape(len(x1_i_dist)), cmap='Greens', axes=axes)
-                plt.scatter(x2_i_par[:,0], x2_i_par[:,1], s=1, c=np.array(x2_i_dist).reshape(len(x2_i_dist)), cmap='Purples', axes=axes)
-                plt.xlabel('Amplitude', color=fg_color)
-                plt.ylabel('Phase', color=fg_color)
-                plt.savefig('%sstruct_z.png' % out_dir, dpi=360)
-                plt.close()
+                    fig = plt.figure(facecolor=bg_color, edgecolor=fg_color)
+                    axes = fig.add_subplot(111)
+                    axes.patch.set_facecolor(bg_color)
+                    axes.xaxis.set_tick_params(color=fg_color, labelcolor=fg_color)
+                    axes.yaxis.set_tick_params(color=fg_color, labelcolor=fg_color)
+                    for spine in axes.spines.values():
+                        spine.set_color(fg_color)
+                    plt.scatter(z_mesh[0,:,:][z_mesh[3,:,:] == 0], z_mesh[1,:,:][z_mesh[3,:,:] == 0], s=1, c=z_mesh[2,:,:][z_mesh[3,:,:] == 0], cmap='Greens', axes=axes)
+                    plt.scatter(z_mesh[0,:,:][z_mesh[3,:,:] == 1], z_mesh[1,:,:][z_mesh[3,:,:] == 1], s=1, c=z_mesh[2,:,:][z_mesh[3,:,:] == 1], cmap='Purples', axes=axes)
+                    plt.xlabel('z-space', color=fg_color)
+                    plt.ylabel('z-space', color=fg_color)
+                    plt.savefig('%sstruct_z.png' % out_dir, dpi=360)
+                    plt.close()
 
                 # end of latent space structure plotting
                 
@@ -576,8 +595,11 @@ def main():
                             y_samps], dim=1)
                         y_samps = y_samps.to(device)
 
+                        if conv_nn == True: y_samps = y_samps.reshape(y_samps.shape[0],y_samps.shape[1],1,1)
                         rev_x = model(y_samps, rev=True)
                         rev_x = rev_x.cpu().data.numpy()
+
+                        if conv_nn == True: rev_x = rev_x.reshape(rev_x.shape[0],rev_x.shape[1])
  
                         # plot the samples and the true contours
                         axes[i,j].clear()
