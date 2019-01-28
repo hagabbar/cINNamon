@@ -346,7 +346,7 @@ def plot_losses(losses,filename,logscale=False,legend=None):
 def main():
 
     # Set up simulation parameters
-    batch_size = 64  # set batch size
+    batch_size = 128  # set batch size
     r = 3              # the grid dimension for the output tests
     test_split = r*r   # number of testing samples to use
     sig_model = 'sg'   # the signal model to use
@@ -359,7 +359,7 @@ def main():
     do_contours = True # if True, plot contours of predictions by INN
     plot_cadence = 50
     do_latent_struc = False # if True, plot latent space 2D structure
-    conv_nn = True # if True, use convolutional nn structure
+    conv_nn = False # if True, use convolutional nn structure
 
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
@@ -400,7 +400,7 @@ def main():
     # setting up the model 
     ndim_x = 2        # number of posterior parameter dimensions (x,y)
     ndim_y = ndata    # number of label dimensions (noisy data samples)
-    ndim_z = 100        # number of latent space dimensions?
+    ndim_z = 200        # number of latent space dimensions?
     ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons     # must be > ndim_x and > ndim_y + ndim_z
 
     # define different parts of the network
