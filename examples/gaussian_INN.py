@@ -89,6 +89,10 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         # Shorten output, and remove gradients wrt y, for latent loss
         y_short = torch.cat((y[:, :ndim_z], y[:, -ndim_y:]), dim=1)
 
+        # increase wpred by 1000 each batch of 400 epochs
+        #if ((i_epoch % 400 == 0) & (4800>=i_epoch>=800)): lambd_latent+=1000
+        #elif ((i_epoch % 600 == 0) & (i_epoch>4800)): lambd_latent+=1000
+
         l = lambd_predict * loss_fit(output[:, ndim_z:], y[:, ndim_z:])
         l_forward = l
 
@@ -145,7 +149,7 @@ def train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,ndim_t
         #                              l_tot / batch_idx,
         #                            ), flush=True)
 
-    return l_tot / batch_idx, l_latent, l_rev, l_forward
+    return l_tot / batch_idx, l_latent, l_rev, l_forward, lambd_latent
 
     target3 = norm*contour3
 
@@ -342,18 +346,18 @@ def plot_losses(losses,filename,logscale=False,legend=None):
 def main():
 
     # Set up simulation parameters
-    batch_size = 1600  # set batch size
+    batch_size = 64  # set batch size
     r = 3              # the grid dimension for the output tests
     test_split = r*r   # number of testing samples to use
     sig_model = 'sg'   # the signal model to use
     sigma = 0.2        # the noise std
-    ndata = 8         #32 number of data samples in time series
+    ndata = 128         #32 number of data samples in time series
     bound = [0.0,1.0,0.0,1.0]         # effective bound for likelihood
     seed = 1           # seed for generating data
     out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/"
     n_neurons = 0
     do_contours = True # if True, plot contours of predictions by INN
-    plot_cadence = 25
+    plot_cadence = 50
     do_latent_struc = False # if True, plot latent space 2D structure
     conv_nn = True # if True, use convolutional nn structure
 
@@ -396,7 +400,7 @@ def main():
     # setting up the model 
     ndim_x = 2        # number of posterior parameter dimensions (x,y)
     ndim_y = ndata    # number of label dimensions (noisy data samples)
-    ndim_z = 2        # number of latent space dimensions?
+    ndim_z = 100        # number of latent space dimensions?
     ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons     # must be > ndim_x and > ndim_y + ndim_z
 
     # define different parts of the network
@@ -404,18 +408,46 @@ def main():
     inp = InputNode(ndim_tot, name='input')
 
     # define hidden layer nodes
+    filtsize = 3
+    dropout = 0.0
+    clamp=1.0
     if conv_nn == True:
         t1 = Node([inp.out0], rev_multiplicative_layer,
-                  {'F_class': F_conv, 'clamp': 2.0,
-                   'F_args':{}})
+                  {'F_class': F_conv, 'clamp': clamp,
+                   'F_args':{'kernel_size': filtsize,'leaky_slope':0.1,
+                   'batch_norm':False}})
 
         t2 = Node([t1.out0], rev_multiplicative_layer,
-                  {'F_class': F_conv, 'clamp': 2.0,
-                   'F_args':{}})
+                  {'F_class': F_conv, 'clamp': clamp,
+                   'F_args':{'kernel_size': filtsize,'leaky_slope':0.1,
+                   'batch_norm':False}})
 
         t3 = Node([t2.out0], rev_multiplicative_layer,
-                  {'F_class': F_conv, 'clamp': 2.0,
-                   'F_args':{}})
+                  {'F_class': F_conv, 'clamp': clamp,
+                   'F_args':{'kernel_size': filtsize,'leaky_slope':0.1,
+                   'batch_norm':False}})
+        #t4 = Node([t1.out0], rev_multiplicative_layer,
+        #          {'F_class': F_conv, 'clamp': 2.0,
+        #           'F_args':{'kernel_size': filtsize,'leaky_slope':0.1,
+        #           'batch_norm':False}})
+
+        #t5 = Node([t2.out0], rev_multiplicative_layer,
+        #          {'F_class': F_conv, 'clamp': 2.0,
+        #           'F_args':{'kernel_size': filtsize,'leaky_slope':0.1,
+        #           'batch_norm':False}})
+
+    else:
+        t1 = Node([inp.out0], rev_multiplicative_layer,
+                  {'F_class': F_fully_connected, 'clamp': clamp,
+                   'F_args':{'dropout': dropout}})
+
+        t2 = Node([t1.out0], rev_multiplicative_layer,
+                  {'F_class': F_fully_connected, 'clamp': clamp,
+                   'F_args':{'dropout': dropout}})
+
+        t3 = Node([t2.out0], rev_multiplicative_layer,
+                  {'F_class': F_fully_connected, 'clamp': clamp,
+                   'F_args':{'dropout': dropout}})
 
     # define output layer node
     outp = OutputNode([t3.out0], name='output')
@@ -425,10 +457,9 @@ def main():
 
     # Train model
     # Training parameters
-    n_epochs = 10000
+    n_epochs = 12000
     meta_epoch = 12 # what is this???
     n_its_per_epoch = 12
-    batch_size = 1600
 
     lr = 1e-2
     gamma = 0.01**(1./120)
@@ -438,9 +469,9 @@ def main():
     zeros_noise_scale = 3e-2
 
     # relative weighting of losses:
-    lambd_predict = 300. # forward pass
-    lambd_latent = 300.  # laten space
-    lambd_rev = 400.     # backwards pass
+    lambd_predict = 4000. #300 forward pass
+    lambd_latent = 900.  #300 laten space
+    lambd_rev = 1000.     #400 backwards pass
 
     # padding both the data and the latent space
     # such that they have equal dimension to the parameter space
@@ -508,7 +539,7 @@ def main():
                     param_group['lr'] = lr * 1e-2
 
             # train the model
-            losstot, losslatent, lossrev, lossf = train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,
+            losstot, losslatent, lossrev, lossf, lambd_latent = train(model,train_loader,n_its_per_epoch,zeros_noise_scale,batch_size,
                 ndim_tot,ndim_x,ndim_y,ndim_z,y_noise_scale,optimizer,lambd_predict,
                 loss_fit,lambd_latent,loss_latent,lambd_rev,loss_backward,conv_nn,i_epoch)
 
@@ -610,20 +641,24 @@ def main():
                         axes[i,j].axis(bound)
 
                         # add contours to results
-                        if do_contours:
-                            contour_y = np.reshape(rev_x[:,1], (rev_x[:,1].shape[0]))
-                            contour_x = np.reshape(rev_x[:,0], (rev_x[:,0].shape[0]))
-                            contour_dataset = np.array([contour_x,contour_y])
-                            kernel_cnn = make_contour_plot(axes[i,j],contour_x,contour_y,contour_dataset,'red',flip=False, kernel_cnn=False)
+                        try:
+                            if do_contours:
+                                contour_y = np.reshape(rev_x[:,1], (rev_x[:,1].shape[0]))
+                                contour_x = np.reshape(rev_x[:,0], (rev_x[:,0].shape[0]))
+                                contour_dataset = np.array([contour_x,contour_y])
+                                kernel_cnn = make_contour_plot(axes[i,j],contour_x,contour_y,contour_dataset,'red',flip=False, kernel_cnn=False)
                      
-                            # run overlap tests on results
-                            contour_x = np.reshape(true_post[i,j][:,1], (true_post[i,j][:,1].shape[0]))
-                            contour_y = np.reshape(true_post[i,j][:,0], (true_post[i,j][:,0].shape[0]))
-                            contour_dataset = np.array([contour_x,contour_y])
-                            ks_score, ad_score, beta_score = overlap_tests(rev_x,true_post[i,j],pos_test[cnt],kernel_cnn,gaussian_kde(contour_dataset))
-                            axes[i,j].legend(['Overlap: %s' % str(np.round(beta_score,3))])    
+                                # run overlap tests on results
+                                contour_x = np.reshape(true_post[i,j][:,1], (true_post[i,j][:,1].shape[0]))
+                                contour_y = np.reshape(true_post[i,j][:,0], (true_post[i,j][:,0].shape[0]))
+                                contour_dataset = np.array([contour_x,contour_y])
+                                ks_score, ad_score, beta_score = overlap_tests(rev_x,true_post[i,j],pos_test[cnt],kernel_cnn,gaussian_kde(contour_dataset))
+                                axes[i,j].legend(['Overlap: %s' % str(np.round(beta_score,3))])    
                             
-                            beta_score_hist.append([beta_score])
+                                beta_score_hist.append([beta_score])
+                        except ValueError as e:
+                            pass
+                            
 
                         cnt += 1
 
