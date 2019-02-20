@@ -67,32 +67,32 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # global parameters
 sig_model = 'sg'   # the signal model to use
-run_label='gpu4'
-out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/multipar/%s/" % run_label
+run_label='gpu0'
+out_dir = "/data/public_html/hunter/CBC/cINNamon/gausian_results/multipar/%s/" % run_label
 do_posterior_plots=True
 ndata=64           # length of 1 data sample
 ndim_x=3           # number of parameters to PE on
 ndim_y = ndata     # length of 1 data sample
-ndim_z = 114       # size of latent space
+ndim_z = 75       # size of latent space
 Ngrid=64
-n_neurons = 200
+n_neurons = 0
 ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons # 384     
 r = 3              # the grid dimension for the output tests
 sigma = 0.2        # the noise std
 seed = 1           # seed for generating data
 test_split = r*r   # number of testing samples to use
-N_samp = 4000 # number of test samples to use after training
-plot_cadence = 100   # make plots every N iterations
-numInvLayers=5
+N_samp = 10000 # number of test samples to use after training
+plot_cadence = 20   # make plots every N iterations
+numInvLayers=1
 dropout=0.0
 filtsize = 3       # TODO
 clamp=2.0          # TODO
-tot_dataset_size=int(1e7) # TODO really should use 1e8 once cpu is fixed
+tot_dataset_size=int(1e5) # TODO really should use 1e8 once cpu is fixed
 tot_epoch=11000
 lr=1.5e-3
 zerosNoiseScale=5e-2
-wPred=4000.0        #4000.0
-wLatent= 2900.0     #900.0
+wPred=8000.0        #4000.0
+wLatent= 900.0     #900.0
 wRev= 1000.0        #1000.0
 latentAlphas=None #[8,11]
 backwardAlphas=None # [1.4, 2, 5.5, 7]
@@ -250,6 +250,9 @@ pars_to_store={"sigma":sigma,"ndata":ndata,"T":T,"seed":seed,"n_neurons":n_neuro
                "numInvLayers":numInvLayers}
 store_pars(f,pars_to_store)
 
+# setup output directory - if it does not exist
+os.system('mkdir -p %s' % out_dir)
+
 # generate data
 if not load_dataset:
     pos, labels, x, sig = data_maker.generate(
@@ -334,9 +337,6 @@ for i in range(r):
         axes[i,j].axis([0,1,-1.5,1.5])
 plt.savefig("%stest_distribution.png" % out_dir,dpi=360)
 plt.close()
-
-# setup output directory - if it does not exist
-os.system('mkdir -p %s' % out_dir)
 
 #inRepr = [('ne', data.ne.shape[1]), ('temperature', data.temperature.shape[1]), ('vel', data.vel.shape[1]), ('!!PAD',)]
 #outRepr = [('LatentSpace', 200), ('!!PAD',), ('Halpha', data.lines[0].shape[1]), ('Ca8542', data.lines[1].shape[1])]
@@ -520,7 +520,7 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    print(f"\n\nTraining took {(time()-tStart)/60:.2f} minutes\n")
+    print("\n\nTraining took {(time()-tStart)/60:.2f} minutes\n")
 
 
 exit()
@@ -640,7 +640,7 @@ while True:
     except KeyboardInterrupt:
         pass
     finally:
-        print(f"\n\nTraining took {(time()-tStart)/60:.2f} minutes\n")
+        print("\n\nTraining took {(time()-tStart)/60:.2f} minutes\n")
         
     test = trainer.test(maxBatches=-1)
     print(test[0], test[1])
