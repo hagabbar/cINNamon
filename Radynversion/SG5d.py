@@ -138,7 +138,7 @@ def run(ydata,ypars,sigma,x,loglikelihood,multi_par,bounds):
         #plt.hist(samples[:,i], bins=100)
         plt.ylabel(labels[i])
         plt.xlabel('sample')
-        plt.savefig('/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/multipar/test_chain_%s.png' % str(i))
+        plt.savefig('/data/public_html/hunter/CBC/cINNamon/gausian_results/multipar/test_chain_%s.png' % str(i))
         plt.close()
 
    
