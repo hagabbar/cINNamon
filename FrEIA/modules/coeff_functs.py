@@ -2,7 +2,7 @@ import warnings
 
 import torch.nn as nn
 import torch.nn.functional as F
-
+from sys import exit
 
 class F_conv(nn.Module):
     '''ResNet transformation, not itself reversible, just used below'''
@@ -29,6 +29,9 @@ class F_conv(nn.Module):
         self.conv3 = nn.Conv2d(channels_hidden, channels,
                                kernel_size=kernel_size, padding=pad,
                                bias=not batch_norm)
+        #self.conv4 = nn.Conv2d(channels_hidden, channels,
+        #                       kernel_size=kernel_size, padding=pad,
+        #                       bias=not batch_norm)
 
         if batch_norm:
             self.bn1 = nn.BatchNorm2d(channels_hidden)
@@ -37,6 +40,8 @@ class F_conv(nn.Module):
             self.bn2.weight.data.fill_(1)
             self.bn3 = nn.BatchNorm2d(channels)
             self.bn3.weight.data.fill_(1)
+            #self.bn4 = nn.BatchNorm2d(channels)
+            #self.bn4.weight.data.fill_(1)
         self.batch_norm = batch_norm
 
     def forward(self, x):
@@ -53,6 +58,12 @@ class F_conv(nn.Module):
         out = self.conv3(out)
         if self.batch_norm:
             out = self.bn3(out)
+        #out = F.leaky_relu(out, self.leaky_slope)
+        
+        #out = self.conv4(out)
+        #if self.batch_norm:
+        #    out = self.bn4(out)
+        #out = nn.ReLU(out)
         return out
 
 
