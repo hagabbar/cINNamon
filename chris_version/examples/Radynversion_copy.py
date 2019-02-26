@@ -69,41 +69,41 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 # global parameters
 sig_model = 'sg'   # the signal model to use
 usepars = [0,1,2]    # parameter indices to use
-run_label='gpu1'
+run_label='gpu6'
 out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/multipar/%s/" % run_label
 do_posterior_plots=True
-ndata=128           # length of 1 data sample
+ndata=32           # length of 1 data sample
 ndim_x=3           # number of parameters to PE on
 ndim_y = ndata     # length of 1 data sample
 
-ndim_z = 5      # size of latent space
+ndim_z = 4      # size of latent space
 
-Ngrid=64
+Ngrid=20
 n_neurons = 0
 ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons # 384     
-r = 3              # the grid dimension for the output tests
+r = 4              # the grid dimension for the output tests
 sigma = 0.2        # the noise std
 seed = 1           # seed for generating data
 test_split = r*r   # number of testing samples to use
 test_sample_idx=4
 
-N_samp = 10000 # number of test samples to use after training
+N_samp = 1000 # number of test samples to use after training
 plot_cadence = 25  # make plots every N iterations
 numInvLayers=5
-dropout=0.0
-batchsize=1024
+dropout=0.2
+batchsize=1600
 filtsize = 3       # TODO
 clamp=2.0          # TODO
 tot_dataset_size=2**20 # 2**20 TODO really should use 1e8 once cpu is fixed
 
 tot_epoch=11000
-lr=1.0e-3
-zerosNoiseScale=5e-2
+lr=1.0e-2
+zerosNoiseScale=3e-2
 y_noise_scale = 3e-2
 
-wPred=4000.0        #4000.0
-wLatent= 900.0     #900.0
-wRev= 1000.0        #1000.0
+wPred=300.0        #4000.0
+wLatent= 300.0     #900.0
+wRev= 400.0        #1000.0
 
 latentAlphas=None
 backwardAlphas=None # [1.4, 2, 5.5, 7]
@@ -112,7 +112,7 @@ multi_par=True
 load_dataset=False
 do_contours=True
 do_mcmc=True
-dataLocation1 = 'benchmark_data.h5py'
+dataLocation1 = 'benchmark_data_%s.h5py' % run_label
 T = 1.0           # length of time series (s)
 dt = T/ndata        # sampling time (Sec)
 fnyq = 0.5/dt   # Nyquist frequency (Hz)
@@ -187,61 +187,6 @@ def make_contour_plot(ax,x,y,dataset,color='red',flip=False, kernel_lalinf=False
 
     return kernel
 
-def overlap_tests(pred_samp,lalinf_samp,true_vals,kernel_cnn,kernel_lalinf):
-    """ Perform Anderson-Darling, K-S, and overlap tests
-    to get quantifiable values for accuracy of GAN
-    PE method
-    Parameters
-    ----------
-    pred_samp: numpy array
-        predicted PE samples from CNN
-    lalinf_samp: numpy array
-        predicted PE samples from lalinference
-    true_vals:
-        true scalar point values for parameters to be estimated (taken from GW event paper)
-    kernel_cnn: scipy kde instance
-        gaussian kde of CNN results
-    kernel_lalinf: scipy kde instance
-        gaussian kde of lalinference results
-    ndim:
-        number of dimesnions to do overlap calc in
-    Returns
-    -------
-    ks_score:
-        k-s test score
-    ad_score:
-        anderson-darling score
-    beta_score:
-        overlap score. used to determine goodness of CNN PE estimates
-    """
-
-    # do k-s test
-    ks_mc_score = ks_2samp(pred_samp[:,0].reshape(pred_samp[:,0].shape[0],),lalinf_samp[0][:])
-    ks_q_score = ks_2samp(pred_samp[:,1].reshape(pred_samp[:,1].shape[0],),lalinf_samp[1][:])
-    ks_score = np.array([ks_mc_score,ks_q_score])
-
-    # do anderson-darling test
-    ad_mc_score = anderson_ksamp([pred_samp[:,0].reshape(pred_samp[:,0].shape[0],),lalinf_samp[0][:]])
-    ad_q_score = anderson_ksamp([pred_samp[:,1].reshape(pred_samp[:,1].shape[0],),lalinf_samp[1][:]])
-    ad_score = [ad_mc_score,ad_q_score]
-
-    # compute overlap statistic
-    comb_mc = np.concatenate((pred_samp[:,0].reshape(pred_samp[:,0].shape[0],1),lalinf_samp[0][:].reshape(lalinf_samp[0][:].shape[0],1)))
-    comb_q = np.concatenate((pred_samp[:,1].reshape(pred_samp[:,1].shape[0],1),lalinf_samp[1][:].reshape(lalinf_samp[1][:].shape[0],1)))
-    X, Y = np.mgrid[np.min(comb_mc):np.max(comb_mc):100j, np.min(comb_q):np.max(comb_q):100j]
-    positions = np.vstack([X.ravel(), Y.ravel()])
-    cnn_pdf = kernel_cnn.pdf(positions)
-
-    positions = np.vstack([X.ravel(), Y.ravel()])
-    lalinf_pdf = kernel_lalinf.pdf(positions)
-
-    beta_score = np.divide(np.sum( cnn_pdf*lalinf_pdf ),
-                              np.sqrt(np.sum( cnn_pdf**2 ) *
-                              np.sum( lalinf_pdf**2 )))
-
-
-    return ks_score, ad_score, beta_score
-
 def main():
     # generate data
     # generate data
@@ -255,7 +200,7 @@ def main():
         )
         print('generated data')
 
-        hf = h5py.File('benchmark_data.h5py', 'w')
+        hf = h5py.File('benchmark_data_%s.h5py' % run_label, 'w')
         hf.create_dataset('pos', data=pos)
         hf.create_dataset('labels', data=labels)
         hf.create_dataset('x', data=x)
@@ -284,7 +229,7 @@ def main():
 
         # save computationaly expensive mcmc/waveform runs
         if load_dataset==True:
-            hf = h5py.File('benchmark_data.h5py', 'w')
+            hf = h5py.File('benchmark_data_%s.h5py' % run_label, 'w')
             hf.create_dataset('pos', data=data.pos)
             hf.create_dataset('labels', data=data.labels)
             hf.create_dataset('x', data=data.x)
@@ -294,12 +239,8 @@ def main():
         hf.close()
 
     else:
-        samples=h5py.File(dataLocation1, 'r')['samples']
-        print(samples[0])
-        exit()
+        samples=h5py.File(dataLocation1, 'r')['samples'][:]
         parnames=h5py.File(dataLocation1, 'r')['parnames'][:]
-        print(parnames)
-        exit()
 
     # plot the test data examples
     plt.figure(figsize=(6,6))

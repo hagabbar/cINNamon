@@ -139,9 +139,11 @@ def main():
     r = 4              # the grid dimension for the output tests
     test_split = r*r   # number of testing samples to use
     sigma = 0.2        # the noise std
-    ndata = 32         # number of data samples
-    usepars = [0,1,2]    # parameter indices to use
+    ndata = 64         # number of data samples
+    usepars = [0,1,2,3]    # parameter indices to use
     seed = 1           # seed for generating data
+    run_label='gpu0'
+    out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/multipar/%s/" % run_label
 
     # generate data
     pos, labels, x, sig, parnames = data.generate(
@@ -170,7 +172,7 @@ def main():
             axes[i,j].axis([0,1,-1.5,1.5])
             axes[i,j].set_xlabel('time') if i==r-1 else axes[i,j].set_xlabel('')
             axes[i,j].set_ylabel('h(t)') if j==0 else axes[i,j].set_ylabel('')
-    plt.savefig('/data/public_html/chrism/FrEIA/test_distribution.png',dpi=360)
+    plt.savefig('%stest_distribution.png' % out_dir,dpi=360)
     plt.close()
 
     # precompute true posterior samples on the test data
@@ -209,12 +211,12 @@ def main():
 
                 # save the results to file
                 fig.canvas.draw()
-                plt.savefig('/data/public_html/chrism/FrEIA/true_samples_%d%d.png' % (k,nextk),dpi=360)
+                plt.savefig('%strue_samples_%d%d.png' % (out_dir,k,nextk),dpi=360)
 
     # setting up the model 
     ndim_x = len(usepars)        # number of posterior parameter dimensions (x,y)
     ndim_y = ndata    # number of label dimensions (noisy data samples)
-    ndim_z = 3        # number of latent space dimensions?
+    ndim_z = 4        # number of latent space dimensions?
     ndim_tot = max(ndim_x,ndim_y+ndim_z)     # must be > ndim_x and > ndim_y + ndim_z
 
     # define different parts of the network
@@ -389,8 +391,8 @@ def main():
 
                             # save the results to file
                             fig.canvas.draw()
-                            plt.savefig('/data/public_html/chrism/FrEIA/posteriors_%d%d_%04d.png' % (k,nextk,i_epoch),dpi=360)
-                            plt.savefig('/data/public_html/chrism/FrEIA/latest_%d%d.png' % (k,nextk),dpi=360)
+                            plt.savefig('%sposteriors_%d%d_%04d.png' % (out_dir,k,nextk,i_epoch),dpi=360)
+                            plt.savefig('%slatest_%d%d.png' % (out_dir,k,nextk),dpi=360)
                             plt.close()
                 s += 1
 
@@ -404,7 +406,7 @@ def main():
                 axes.set_ylabel('overlap')
                 axes.set_xlabel('epoch')
                 axes.set_ylim([0,1])
-                plt.savefig('/data/public_html/chrism/FrEIA/overlap.png',dpi=360)
+                plt.savefig('%soverlap.png' % out_dir,dpi=360)
                 plt.close()
 
     except KeyboardInterrupt:

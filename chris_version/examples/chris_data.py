@@ -146,14 +146,22 @@ def overlap(x,y):
     elif x.shape[1]==3:
         X, Y, Z = np.mgrid[0:1:20j, 0:1:20j, 0:1:20j]
         positions = np.vstack([X.ravel(), Y.ravel(), Z.ravel()])
+    elif x.shape[1]==4:
+        X, Y, Z, H = np.mgrid[0:1:20j, 0:1:20j, 0:1:20j, 0:1:20j]
+        positions = np.vstack([X.ravel(), Y.ravel(), Z.ravel(), H.ravel()])
+    elif x.shape[1]==5:
+        X, Y, Z, H, J = np.mgrid[0:1:20j, 0:1:20j, 0:1:20j, 0:1:20j, 0:1:20j]
+        positions = np.vstack([X.ravel(), Y.ravel(), Z.ravel(), H.ravel(), J.ravel()])
     kernel_x = gaussian_kde(x.T)
     Z_x = np.reshape(kernel_x(positions).T, X.shape)
     kernel_y = gaussian_kde(y.T)
     Z_y = np.reshape(kernel_y(positions).T, X.shape)
     n_x = 1.0/np.sum(Z_x)
     n_y = 1.0/np.sum(Z_y)
+    print('Computed overlap ...')
 
-    return (n_y/n_x)*np.sum(Z_x*Z_y)/np.sum(Z_x*Z_x)
+    return (np.sum(Z_x*Z_y) / np.sqrt( np.sum(Z_x**2) * np.sum(Z_y**2) ))
+    #return (n_y/n_x)*np.sum(Z_x*Z_y)/np.sum(Z_x*Z_x)
 
 #def get_lik(ydata,n_grid=64,sig_model='sg',sigma=None,xvec=None,bound=[0,1,0,1,0,1]):
 #
