@@ -68,42 +68,41 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # global parameters
 sig_model = 'sg'   # the signal model to use
-usepars = [0,1,2]    # parameter indices to use
-run_label='gpu6'
+usepars = [0,1,2,3]    # parameter indices to use
+run_label='gpu0'
 out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/multipar/%s/" % run_label
 do_posterior_plots=True
-ndata=32           # length of 1 data sample
-ndim_x=3           # number of parameters to PE on
+ndata=64           # length of 1 data sample
+ndim_x=len(usepars)           # number of parameters to PE on
 ndim_y = ndata     # length of 1 data sample
 
-ndim_z = 4      # size of latent space
+ndim_z = 6     # size of latent space
 
 Ngrid=20
 n_neurons = 0
 ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons # 384     
-r = 4              # the grid dimension for the output tests
+r = 3              # the grid dimension for the output tests
 sigma = 0.2        # the noise std
 seed = 1           # seed for generating data
 test_split = r*r   # number of testing samples to use
-test_sample_idx=4
 
 N_samp = 1000 # number of test samples to use after training
-plot_cadence = 25  # make plots every N iterations
+plot_cadence = 50 # make plots every N iterations
 numInvLayers=5
-dropout=0.2
+dropout=0.0
 batchsize=1600
 filtsize = 3       # TODO
 clamp=2.0          # TODO
 tot_dataset_size=2**20 # 2**20 TODO really should use 1e8 once cpu is fixed
 
-tot_epoch=11000
-lr=1.0e-2
-zerosNoiseScale=3e-2
-y_noise_scale = 3e-2
+tot_epoch=50000
+lr=1.0e-3
+zerosNoiseScale=5e-2
+y_noise_scale = 5e-2
 
-wPred=300.0        #4000.0
-wLatent= 300.0     #900.0
-wRev= 400.0        #1000.0
+wPred=4000.0        #4000.0
+wLatent= 900.0     #900.0
+wRev= 1000.0        #1000.0
 
 latentAlphas=None
 backwardAlphas=None # [1.4, 2, 5.5, 7]
@@ -223,7 +222,8 @@ def main():
         samples = np.zeros((r*r,N_samp,ndim_x))
         for i in range(r):
             for j in range(r):
-                samples[cnt,:,:] = data_maker.get_lik(np.array(labels_test[cnt,:]).flatten(),sigma=sigma,usepars=usepars,Nsamp=N_samp)
+                samples[cnt,:,:] = data_maker.get_lik(np.array(labels_test[cnt,:]).flatten(),np.array(pos_test[cnt,:]),
+                                                      out_dir,cnt,sigma=sigma,usepars=usepars,Nsamp=N_samp)
                 print(samples[cnt,:10,:])
                 cnt += 1
 
@@ -284,7 +284,6 @@ def main():
                 fig.canvas.draw()
                 plt.savefig('%strue_samples_%d%d.png' % (out_dir,k,nextk),dpi=360)
 
-
     def store_pars(f,pars):
         for i in pars.keys():
             f.write("%s: %s\n" % (i,str(pars[i])))
@@ -301,7 +300,7 @@ def main():
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
 
-    inRepr = [('amp', 1), ('t0', 1), ('tau', 1), ('!!PAD',)]
+    inRepr = [('amp', 1), ('t0', 1), ('tau', 1), ('phi', 1), ('!!PAD',)]
     outRepr = [('LatentSpace', ndim_z), ('!!PAD',), ('timeseries', data.atmosOut.shape[1])]
     model = RadynversionNet(inRepr, outRepr, dropout=dropout, zeroPadding=0, minSize=ndim_tot, numInvLayers=numInvLayers)
 
@@ -328,7 +327,7 @@ def main():
 
     try:
         tStart = time()
-        olvec = np.zeros((r,r,int(trainer.numEpochs/10)))
+        olvec = np.zeros((r,r,int(tot_epoch/plot_cadence)))
         s = 0
 
         for epoch in range(trainer.numEpochs):
@@ -340,7 +339,7 @@ def main():
             loss, indLosses = trainer.train(epoch)
 
             # loop over a few cases and plot results in a grid
-            if np.remainder(epoch,10)==0:
+            if np.remainder(epoch,plot_cadence)==0:
                 for k in range(ndim_x):
                     parname1 = parnames[k]
                     for nextk in range(ndim_x):
@@ -348,8 +347,11 @@ def main():
                         if nextk>k:
                             cnt = 0
 
-                            # initialize plot for showing testing results
+                            # initialize 2D plots for showing testing results
                             fig, axes = plt.subplots(r,r,figsize=(6,6),sharex='col',sharey='row')
+
+                            # initialize 1D plots for showing testing results
+                            fig_1d, axes_1d = plt.subplots(r,r,figsize=(6,6),sharex='col',sharey='row')
 
                             for i in range(r):
                                 for j in range(r):
@@ -372,11 +374,38 @@ def main():
                                         ol = data_maker.overlap(samples[cnt,:,:ndim_x],rev_x[:,:ndim_x])
                                         olvec[i,j,s] = ol                                     
 
-                                    # plot the samples and the true contours
+                                    def confidence_bd(samp_array):
+                                        """
+                                        compute confidence bounds for a given array
+                                        """
+                                        cf_bd_sum_lidx = 0
+                                        cf_bd_sum_ridx = 0
+                                        cf_bd_sum_left = 0
+                                        cf_bd_sum_right = 0
+                                        cf_perc = 0.05
+
+                                        cf_bd_sum_lidx = np.sort(samp_array)[int(len(samp_array)*cf_perc)]
+                                        cf_bd_sum_ridx = np.sort(samp_array)[int(len(samp_array)*(1.0-cf_perc))]
+
+                                        return [cf_bd_sum_lidx, cf_bd_sum_ridx]
+
+                                    # plot the 2D samples and the true contours
+                                    true_cfbd_x = confidence_bd(samples[cnt,:,k])
+                                    true_cfbd_y = confidence_bd(samples[cnt,:,nextk]) 
+                                    pred_cfbd_x = confidence_bd(rev_x[:,k])
+                                    pred_cfbd_y = confidence_bd(rev_x[:,nextk])
                                     axes[i,j].clear()
                                     axes[i,j].scatter(samples[cnt,:,k], samples[cnt,:,nextk],c='b',s=0.2,alpha=0.5)
                                     axes[i,j].scatter(rev_x[:,k], rev_x[:,nextk],c='r',s=0.2,alpha=0.5)
                                     axes[i,j].plot(pos_test[cnt,k],pos_test[cnt,nextk],'+c',markersize=8)
+                                    #axes[i,j].axvline(x=true_cfbd_x[0], linewidth=0.5, color='b')
+                                    #axes[i,j].axvline(x=true_cfbd_x[1], linewidth=0.5, color='b')
+                                    #axes[i,j].axhline(y=true_cfbd_y[0], linewidth=0.5, color='b')
+                                    #axes[i,j].axhline(y=true_cfbd_y[1], linewidth=0.5, color='b')
+                                    #axes[i,j].axvline(x=pred_cfbd_x[0], linewidth=0.5, color='r')
+                                    #axes[i,j].axvline(x=pred_cfbd_x[1], linewidth=0.5, color='r')
+                                    #axes[i,j].axhline(y=pred_cfbd_y[0], linewidth=0.5, color='r')
+                                    #axes[i,j].axhline(y=pred_cfbd_y[1], linewidth=0.5, color='r')
                                     axes[i,j].set_xlim([0,1])
                                     axes[i,j].set_ylim([0,1])
                                     oltxt = '%.2f' % olvec[i,j,s]
@@ -388,296 +417,72 @@ def main():
                                     matplotlib.rc('ytick', labelsize=8) 
                                     axes[i,j].set_xlabel(parname1) if i==r-1 else axes[i,j].set_xlabel('')
                                     axes[i,j].set_ylabel(parname2) if j==0 else axes[i,j].set_ylabel('')
-                                    cnt += 1
+                                   
+                                    # plot the 1D samples and the 5% confidence bounds
+                                    axes_1d[i,j].clear()
+                                    axes_1d[i,j].hist(samples[cnt,:,k],color='b',bins=100,alpha=0.5)
+                                    axes_1d[i,j].hist(rev_x[:,k],color='r',bins=100,alpha=0.5)
+                                    axes_1d[i,j].axvline(x=pos_test[cnt,k], linewidth=0.5, color='black')
+                                    axes_1d[i,j].axvline(x=confidence_bd(samples[cnt,:,k])[0], linewidth=0.5, color='b')
+                                    axes_1d[i,j].axvline(x=confidence_bd(samples[cnt,:,k])[1], linewidth=0.5, color='b')
+                                    axes_1d[i,j].axvline(x=confidence_bd(rev_x[:,k])[0], linewidth=0.5, color='r')
+                                    axes_1d[i,j].axvline(x=confidence_bd(rev_x[:,k])[1], linewidth=0.5, color='r')
+                                    axes_1d[i,j].set_xlim([0,1])
+                                    axes_1d[i,j].text(0.90, 0.95, oltxt,
+                                        horizontalalignment='right',
+                                        verticalalignment='top',
+                                            transform=axes_1d[i,j].transAxes)
+                                    axes_1d[i,j].set_xlabel(parname1) if i==r-1 else axes_1d[i,j].set_xlabel('')
 
+                                    cnt += 1
                             # save the results to file
+                            fig_1d.canvas.draw()
+                            fig_1d.savefig('%sposteriors-1d_%d_%04d.png' % (out_dir,k,epoch),dpi=360)
+                            fig_1d.savefig('%slatest-1d_%d.png' % (out_dir,k),dpi=360)
+                            #fig_1d.close()
+
                             fig.canvas.draw()
-                            plt.savefig('%sposteriors_%d%d_%04d.png' % (out_dir,k,nextk,epoch),dpi=360)
-                            plt.savefig('%slatest_%d%d.png' % (out_dir,k,nextk),dpi=360)
-                            plt.close()
+                            fig.savefig('%sposteriors-2d_%d%d_%04d.png' % (out_dir,k,nextk,epoch),dpi=360)
+                            fig.savefig('%slatest-2d_%d%d.png' % (out_dir,k,nextk),dpi=360)
+                            #fig.close()
                 s += 1
 
             # plot overlap results
-            if np.remainder(epoch,10)==0:                
-                fig, axes = plt.subplots(1,figsize=(6,6))
+            if np.remainder(epoch,plot_cadence)==0:
+                fig_log = plt.figure(figsize=(6,6))             
+                axes_log = fig_log.add_subplot(1,1,1)
                 for i in range(r):
                     for j in range(r):
-                        axes.semilogx(10*np.arange(olvec.shape[2]),olvec[i,j,:],alpha=0.5)
+                        axes_log.semilogx(np.arange(tot_epoch,step=plot_cadence),olvec[i,j,:],alpha=0.5)
+                axes_log.grid()
+                axes_log.set_ylabel('overlap')
+                axes_log.set_xlabel('epoch (log)')
+                axes_log.set_ylim([0,1])
+                plt.savefig('%soverlap_logscale.png' % out_dir, dpi=360)
+                plt.close()      
+
+                fig = plt.figure(figsize=(6,6))
+                axes = fig.add_subplot(1,1,1)
+                for i in range(r):
+                    for j in range(r):
+                        axes.plot(np.arange(tot_epoch,step=plot_cadence),olvec[i,j,:],alpha=0.5)
                 axes.grid()
                 axes.set_ylabel('overlap')
                 axes.set_xlabel('epoch')
                 axes.set_ylim([0,1])
                 plt.savefig('%soverlap.png' % out_dir, dpi=360)
-                plt.close()        
+                plt.close()  
 
-        if ((epoch % 1 == 0) & (epoch>5)):
-            fig, axis = plt.subplots(4,1, figsize=(10,8))
-            #fig.show()
-            fig.canvas.draw()
-            axis[0].clear()
-            axis[1].clear()
-            axis[2].clear()
-            axis[3].clear()
-            for i in range(len(indLosses)):
-                lossVec[i].append(indLosses[i])
-            losses.append(loss)
-            fig.suptitle('Current Loss: %.2e, min loss: %.2e' % (loss, np.nanmin(np.abs(losses))))
-            axis[0].semilogy(np.arange(len(losses)), np.abs(losses))
-            for i, lo in enumerate(lossVec):
-                axis[1].semilogy(np.arange(len(losses)), lo, '--', label=lossLabels[i])
-            axis[1].legend(loc='upper left')
-            tNow = time()
-            elapsed = int(tNow - tStart)
-            eta = int((tNow - tStart) / (epoch + 1) * trainer.numEpochs) - elapsed
-
-            if epoch % 2 == 0:
-                mses = trainer.test(maxBatches=1)
-                lineProfiles = mses[2]
-                
-            if epoch % 10 == 0:
-                alphaRange, mmdF, mmdB, idxF, idxB = trainer.review_mmd()
-                
-            axis[3].semilogx(alphaRange, mmdF, label='Latent Space')
-            axis[3].semilogx(alphaRange, mmdB, label='Backward')
-            axis[3].semilogx(alphaRange[idxF], mmdF[idxF], 'ro')
-            axis[3].semilogx(alphaRange[idxB], mmdB[idxB], 'ro')
-            axis[3].legend()
-
-            testTime = time() - tNow
-            axis[2].plot(lineProfiles[0, model.outSchema.timeseries].cpu().numpy())
-            for a in axis:
-                a.grid()
-            axis[3].set_xlabel('Epochs: %d, Elapsed: %d s, ETA: %d s (Testing: %d s)' % (epoch, elapsed, eta, testTime))
-            
-                
-            fig.canvas.draw()
-            fig.savefig('%slosses.pdf' % out_dir)
-
-    except KeyboardInterrupt:
-        pass
-    finally:
-        print("\n\nTraining took {(time()-tStart)/60:.2f} minutes\n")
-main()
-exit()
-"""
-        if do_posterior_plots and ((epoch % plot_cadence == 0) & (epoch>5)):
-
-            print('Making posterior plots ...')
-            # choose which test sample
-            cnt = test_sample_idx
-            # initialize plot for showing testing results
-            fig_post, axes = plt.subplots(ndim_x,ndim_x,figsize=(10,8))
-
-            # convert data into correct format
-            y_samps = np.tile(np.array(labels_test[cnt,:]),N_samp).reshape(N_samp,ndim_y)
-            y_samps = torch.tensor(y_samps, dtype=torch.float)
-            #y_samps += y_noise_scale * torch.randn(N_samp, ndim_y)
-            y_samps = torch.cat([torch.randn(N_samp, ndim_z), #zeros_noise_scale * 
-                torch.zeros(N_samp, ndim_tot - ndim_y - ndim_z),
-                y_samps], dim=1)
-            y_samps = y_samps.to(dev)
-
-            if conv_nn == True: y_samps = y_samps.reshape(y_samps.shape[0],y_samps.shape[1],1,1)
-            rev_x = model(y_samps, rev=True)
-            rev_x = rev_x.cpu().data.numpy()
-
-            # make contour plots of INN time series predictions
-            #w=3.8
-            #p=0.5
-            from SG5d import sg
-            sig_preds=[]
-            for i in range(len(true_post[0,0,:,:])):
-                #sig_preds.append([rev_x[i,0]*np.sin(2.0*np.pi*w*fnyq*(x-rev_x[i,1]) + 2.0*np.pi*p)*np.exp(-((x-rev_x[i,1])/rev_x[i,2])**2) for x in xvec])
-                sig_preds.append([sg(data.x,[rev_x[i,0],rev_x[i,1],rev_x[i,2]],fnyq)])
-            sig_preds=np.array(sig_preds).reshape(len(true_post[0,0,:,:]),ndata)
-
-            # compute percentile curves
-            perc_90 = []
-            perc_75 = []
-            perc_25 = []
-            perc_5 = []
-            for n in range(sig_preds.shape[1]):
-                perc_90.append(np.percentile(sig_preds[:,n], 90))
-                perc_75.append(np.percentile(sig_preds[:,n], 75))
-                perc_25.append(np.percentile(sig_preds[:,n], 25))
-                perc_5.append(np.percentile(sig_preds[:,n], 5))
-
-            fig_tseries, ax_tseries = plt.subplots(1,1,figsize=(10,8))
-
-            #for i in range(10):
-            #    ax_tseries.plot(data.x*ndata,sig_preds[i],color='grey',alpha=0.5)
-            ax_tseries.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#d5d8dc')
-            ax_tseries.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')
-            ax_tseries.plot(data.x*ndata,labels_test[cnt,:],color='black')
-            ax_tseries.plot(data.x*ndata,np.array(sig_test[cnt,:]),'-',color='cyan')
-            fig_post.savefig('%stseries_preds_%s.pdf' % (out_dir,epoch), dpi=360)
-            fig_tseries.savefig('%stseries_preds_latest.pdf' % out_dir, dpi=360)
-
-            # make corner plot for one test waveform
-            cnt_plot = ndim_x
-            cnt_y = 0
-            cnt_beta = 0
-            beta_score_loop = []
-            #plot_labels = [r"$Amplitude$", r"$t0$", r"$f$", r"$\phi$", r"$\sigma$"]
-            plot_labels = [r"$Amplitude$", r"$t0$", r"$\sigma$"]
-            for i in range(ndim_x):
-                for j in range(cnt_plot):
-                    axes[-j+cnt_plot-1+cnt_y,i].clear()
-                    #axes[-j+cnt_plot-1+cnt_y,i].contour(mvec,cvec,lik[0,0,:].reshape(Ngrid,Ngrid),levels=[0.68,0.9,0.99])
-                    axes[-j+cnt_plot-1+cnt_y,i].scatter(rev_x[:,i], rev_x[:,-j+cnt_plot-1+cnt_y],edgecolors='none',alpha=1.0,s=0.8,color='red')
-                    axes[-j+cnt_plot-1+cnt_y,i].scatter(true_post[0,0,:,i],true_post[0,0,:,-j+cnt_plot-1+cnt_y],edgecolors='none',s=0.8,alpha=0.5,color='blue') # s=0.3
-                    axes[-j+cnt_plot-1+cnt_y,i].plot(pos_test[cnt,i],pos_test[cnt,-j+cnt_plot-1+cnt_y],'+c',markersize=5,markeredgewidth=0.5,alpha=0.75)
-                    axes[-j+cnt_plot-1+cnt_y,i].set_xlabel(plot_labels[i])
-                    axes[-j+cnt_plot-1+cnt_y,i].set_ylabel(plot_labels[-j+cnt_plot-1+cnt_y])
-                    #axes[-j+cnt_plot-1+cnt_y,i].tick_params(labelsize=2)
-                    #axes[-j+cnt_plot-1+cnt_y,i].axis([bound[i*2],bound[(i*2)+1],bound[(-j+cnt_plot-1+cnt_y)*2],bound[((-j+cnt_plot-1+cnt_y)*2)+1]])
-                    axes[-j+cnt_plot-1+cnt_y,i].axis(bound[:4])
-
-                    # set some axis to be off
-                    if (-j+cnt_plot-1+cnt_y) != (ndim_x-1):
-                        axes[-j+cnt_plot-1+cnt_y,i].get_xaxis().set_visible(False)
-                    if (i) != 0:
-                        axes[-j+cnt_plot-1+cnt_y,i].get_yaxis().set_visible(False)
-
-                    try:
-                        if do_contours:
-                            if conv_nn==True: rev_x=rev_x.reshape(rev_x.shape[0],rev_x.shape[1])
-                            contour_y = np.reshape(rev_x[:,-j+cnt_plot-1+cnt_y], (rev_x[:,-j+cnt_plot-1+cnt_y].shape[0]))
-                            contour_x = np.reshape(rev_x[:,i], (rev_x[:,i].shape[0]))
-                            contour_dataset = np.array([contour_x,contour_y])
-                            kernel_cnn = make_contour_plot(axes[-j+cnt_plot-1+cnt_y,i],contour_x,contour_y,contour_dataset,'red',flip=False, kernel_cnn=False)
-
-                            # run overlap tests on results
-                            contour_x = np.reshape(true_post[0,0,:,-j+cnt_plot-1+cnt_y], (true_post[0,0,:,-j+cnt_plot-1+cnt_y].shape[0]))
-                            contour_y = np.reshape(true_post[0,0,:,i], (true_post[0,0,:,i].shape[0]))
-                            contour_dataset = np.array([contour_x,contour_y])
-                            kernel_mcmc = make_contour_plot(axes[-j+cnt_plot-1+cnt_y,i],contour_x,contour_y,contour_dataset,'blue',flip=True, kernel_cnn=False) # gaussian_kde(contour_dataset)
-                            ks_score, ad_score, beta_score = overlap_tests(np.vstack((rev_x[:,i],rev_x[:,-j+cnt_plot-1+cnt_y])),
-                                                                                   np.vstack((true_post[0,0,:,i],true_post[0,0,:,-j+cnt_plot-1+cnt_y])),
-                                                                                   np.vstack((pos_test[cnt,i],pos_test[cnt,-j+cnt_plot-1+cnt_y])),kernel_cnn,kernel_mcmc)
-                            axes[-j+cnt_plot-1+cnt_y,i].legend(['Overlap: %s' % str(np.round(beta_score,3))])#, prop={'size': 3})
-
-                            # save and plot history of overlap score
-                            beta_score_loop.append([beta_score])
-                            cnt_beta+=1
-                            if cnt_beta==ndim_x: 
-                                beta_score_hist.append([np.mean(beta_score_loop)])
-                                #beta_score_loop_hist.append([beta_score_loop])
-                                fig_beta, ax_beta = plt.subplots(1,1, figsize=(10,8))
-                                ax_beta.plot(np.linspace(plot_cadence,epoch,len(beta_score_hist)),beta_score_hist)
-                                fig_beta.savefig('%sbeta_history.pdf' % out_dir,dpi=360)
-                    except Exception as e: 
-                        print(e)
-                        pass
-                    #    exit()
-                    #except:
-                        #pass
-                cnt_plot -= 1
-                cnt_y += 1
-
-            cnt_y = 0
-            # remove plots not used
-            for i in range(ndim_x):
-                for j in range(cnt_y,ndim_x):
-                    axes[i,j].set_visible(False)
-                cnt_y += 1
-            #figure = corner.corner(rev_x[:,:5], labels=[r"$Amplitude$", r"$t0$", r"$f$", r"$\phi$", r"$\sigma$"],
-            #                       quantiles=[0.68, 0.9, 0.99], color='red',
-            #                       show_titles=True, title_kwargs={"fontsize": 12})
-            #corner.corner(true_post[i,j,:], labels=[r"$Amplitude$", r"$t0$", r"$f$", r"$\phi$", r"$\sigma$"],
-            #                       quantiles=[0.68, 0.9, 0.99], fig=figure, color='blue',
-            #                       show_titles=True, title_kwargs={"fontsize": 12}) 
-            fig_post.canvas.draw()
-            fig_post.tight_layout()
-            fig_post.savefig('%sposteriors_%s.pdf' % (out_dir,epoch),dpi=360)
-            fig_post.savefig('%slatest.pdf' % out_dir,dpi=360)
-            #plt.clf()
-            #plt.close()
-except KeyboardInterrupt:
-    pass
-finally:
-    print("\n\nTraining took {(time()-tStart)/60:.2f} minutes\n")
-
-"""
-exit()
-# Test the output of the model. The first number is the L2 on the forward process generated line profiles, while the second is the MMD between atmosphere generated by backwards model and the expected atmosphere (and padding).
-
-# In[ ]:
-
-trainer.test(maxBatches=-1)[:2]
-
-
-# Define functions to allows us to save and load the model and associated machinery in a way that allows us to continue training if desired.
-
-# In[ ]:
-
-
-# https://discuss.pytorch.org/t/saving-and-loading-a-model-in-pytorch/2610/4
-def training_checkpoint():
-    return {
-        'epoch': totalEpochs,
-        'state_dict': model.state_dict(),
-        'optimizer': trainer.optim.state_dict(),
-        'scheduler': trainer.scheduler.state_dict(),
-        'inRepr': inRepr,
-        'outRepr': outRepr
-    }
-
-def save_checkpoint(state, filename='checkpoint.pth.tar'):
-    torch.save(state, filename)
-
-def load_checkpoint(filename):
-        if os.path.isfile(filename):
-            print("=> loading checkpoint '{}'".format(filename))
-            checkpoint = torch.load(filename)
-            global totalEpochs
-            totalEpochs = checkpoint['epoch']
-            model.load_state_dict(checkpoint['state_dict'])
-            trainer.optim.load_state_dict(checkpoint['optimizer'])
-            trainer.scheduler.load_state_dict(checkpoint['scheduler'])
-            inRepr = checkpoint['inRepr']
-            outRepr = checkpoint['outRepr']
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(filename, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(filename))
-
-
-# Do repeated iterations of the training, up to 12000 epochs. Save a model every 600 epochs. This takes quite a while and makes a new plot for each of the 600 epoch batches.
-
-# In[ ]:
-
-
-prevTest = trainer.test(maxBatches=-1)
-while True:
-    save_checkpoint(training_checkpoint(), filename='checkpt_'+str(totalEpochs)+'_'+str(int(trainer.wPred))+'.pth.tar')
-    trainer.numEpochs = 600
-    trainer.fadeIn = False
-    trainer.wPred += 1000
-    
-    # Do the training iter --  this is just a horrible copy and paste from above
-    losses = []
-    lossVec = [[] for _ in range(4)]
-    lossLabels = ['L2 Line', 'MMD Latent', 'MMD Reverse', 'L2 Reverse']
-    out = None
-    fig, axis = plt.subplots(4,1, figsize=(10,8))
-    fig.show()
-    fig.canvas.draw()
-    alphaRange, mmdF, mmdB, idxF, idxB = [1,1], [1,1], [1,1], 0, 0
-    try:
-        tStart = time()
-        for epoch in range(trainer.numEpochs):
-            totalEpochs += 1
-
-            trainer.scheduler.step()
-
-            loss, indLosses = trainer.train(epoch)
-
-            axis[0].clear()
-            axis[1].clear()
-            axis[2].clear()
-            axis[3].clear()
-            if epoch > 5:
+            #egg = True
+            #if egg==False:
+            if np.remainder(epoch,plot_cadence)==0 and (epoch>5):
+                fig, axis = plt.subplots(4,1, figsize=(10,8))
+                #fig.show()
+                fig.canvas.draw()
+                axis[0].clear()
+                axis[1].clear()
+                axis[2].clear()
+                axis[3].clear()
                 for i in range(len(indLosses)):
                     lossVec[i].append(indLosses[i])
                 losses.append(loss)
@@ -693,10 +498,10 @@ while True:
                 if epoch % 2 == 0:
                     mses = trainer.test(maxBatches=1)
                     lineProfiles = mses[2]
-
+                
                 if epoch % 10 == 0:
                     alphaRange, mmdF, mmdB, idxF, idxB = trainer.review_mmd()
-
+                
                 axis[3].semilogx(alphaRange, mmdF, label='Latent Space')
                 axis[3].semilogx(alphaRange, mmdB, label='Backward')
                 axis[3].semilogx(alphaRange[idxF], mmdF[idxF], 'ro')
@@ -704,152 +509,18 @@ while True:
                 axis[3].legend()
 
                 testTime = time() - tNow
-                axis[2].plot(lineProfiles[0, model.outSchema.Halpha].cpu().numpy())
-                axis[2].plot(lineProfiles[0, model.outSchema.Ca8542].cpu().numpy())
+                axis[2].plot(lineProfiles[0, model.outSchema.timeseries].cpu().numpy())
                 for a in axis:
                     a.grid()
                 axis[3].set_xlabel('Epochs: %d, Elapsed: %d s, ETA: %d s (Testing: %d s)' % (epoch, elapsed, eta, testTime))
-
-
-            fig.canvas.draw()
+            
+                
+                fig.canvas.draw()
+                fig.savefig('%slosses.pdf' % out_dir)
 
     except KeyboardInterrupt:
         pass
     finally:
         print("\n\nTraining took {(time()-tStart)/60:.2f} minutes\n")
-        
-    test = trainer.test(maxBatches=-1)
-    print(test[0], test[1])
-    
-    if totalEpochs >= 12000:
-        save_checkpoint(training_checkpoint(), filename='checkpt_'+str(totalEpochs)+'_'+str(int(trainer.wPred))+'.pth.tar')
-        break
-    
-
-
-# Loop over all the checkpoint files in the current directory, and compute their accuracy on the unseen testing set
-
-# In[ ]:
-
-
-files = [f for f in os.listdir() if f.startswith('checkpt_') and f.endswith('.pth.tar')]
-numerical = [int(f.split('_')[1]) for f in files]
-files = [f[1] for f in sorted(zip(numerical, files))]
-
-for f in files:
-    load_checkpoint(f)
-    print(trainer.test(maxBatches=-1)[:2])
-
-
-# This cell can be used to load desired model from the information produced by the previous cell. Just change the argument to numerical.index to the number of epochs the desirec checkpoint was trained for. It will spit out the losses again.
-
-# In[ ]:
-
-
-files = [f for f in os.listdir() if f.startswith('checkpt_') and f.endswith('.pth.tar')]
-numerical = [int(f.split('_')[1]) for f in files]
-idx = numerical.index(11400)
-load_checkpoint(files[idx])
-trainer.test(maxBatches=-1)[:2]
-
-
-# Define a function to transform from out log-ish velocity to km/s
-
-# In[10]:
-
-
-def logvel_to_vel(v):
-    vSign = v / torch.abs(v)
-    vSign[torch.isnan(vSign)] = 0
-    vel = vSign * (10**torch.abs(v) - 1.0)
-    return vel
-
-
-# Define a little helper class to better format matplotlib's offset on the x-axis for the huge numbers of cm we're using here!
-
-# In[90]:
-
-
-import matplotlib.ticker
-class oom_formatter(matplotlib.ticker.ScalarFormatter):
-    def __init__(self,order=0,fformat="%1.1f",offset=True,math_text=True):
-        self.oom = order
-        self.fformat = fformat
-        matplotlib.ticker.ScalarFormatter.__init__(self,useOffset=offset,useMathText=math_text)
-        
-    def _set_orderOfMagnitude(self,nothing):
-        self.orderOfMagnitude = self.oom
-        
-    def _set_format(self, v_min, v_max):
-        self.format = self.fformat
-        if self._useMathText:
-            self.format = "$%s$" % matplotlib.ticker._mathdefault(self.format)
-
-
-# Test a random unseen atmosphere with the forward model and compare against the validation data with a nice plot. You may need to run this (quite) a few times to get an atmosphere that produces the line shapes you were looking for. This should produce a different result every time.
-
-# In[94]:
-
-
-model.eval()
-with torch.no_grad():
-    x, y = next(iter(data.testLoader))
-    x = x.to(dev)
-    pad_fn = lambda *x: torch.zeros(*x, device=dev)
-    inp = model.inSchema.fill({'ne': x[:, 0],
-                                'temperature': x[:, 1],
-                                'vel': x[:, 2]},
-                               zero_pad_fn=pad_fn)
-    
-    yz = model(inp.to(dev))
-    fig, ax = plt.subplots(2,2, figsize=(8,6))
-    ax = ax.ravel()
-    ax = [ax[0], ax[0].twinx(), *ax[1:]]
-    ax[0].plot(data.z.numpy(), x[0, 0].cpu().numpy())
-    ax[1].plot(data.z.numpy(), x[0, 1].cpu().numpy(), color='C1')
-    ax[2].plot(data.z.numpy(), logvel_to_vel(x[0, 2].cpu()).numpy(), color='green')
-    ax[3].plot(data.wls[0].numpy(), y[0, 0].numpy(), '--', zorder=3)
-    ax[3].plot(data.wls[0].numpy(), yz[0, model.outSchema.Halpha].cpu().numpy())
-    ax[4].plot(data.wls[1].numpy(), y[0, 1].numpy(), '--', zorder=3, label='Ground Truth')
-    ax[4].plot(data.wls[1].numpy(), yz[0, model.outSchema.Ca8542].cpu().numpy(), label='Predicted')
-    ax[0].set_ylabel('log $n_e$ [cm$^{-3}$]', color='C0')
-    ax[1].set_ylabel('log T [K]', color='C1')
-    ax[2].set_ylabel('v [km s$^{-1}$]', color='C2')
-    ax[3].set_ylabel('Normalised Intensity')
-    ax[0].set_xlabel('z [cm]')
-    ax[2].set_xlabel('z [cm]')
-    ax[3].set_xlabel(r'Wavelength [$\AA$]')
-    ax[4].set_xlabel(r'Wavelength [$\AA$]')
-    ax[3].set_title(r'H$_\alpha$')
-    ax[4].set_title(r'Ca II 8542$\AA$')
-    ax[0].xaxis.set_major_formatter(oom_formatter(8))
-    ax[2].xaxis.set_major_formatter(oom_formatter(8))
-    ax[3].xaxis.set_major_locator(plt.MaxNLocator(5))
-    ax[4].xaxis.set_major_locator(plt.MaxNLocator(5))
-    fig.legend(loc='center', frameon=False)
-    fig.tight_layout()
-    fig.show()
-    fig.canvas.draw()
-
-
-# In[95]:
-
-
-# Save the above figure if desired
-fig.savefig('ForwardProcess2.pdf', dpi=300)
-
-
-# Test the model's inverse solution on a random validation sample from the test set, with `batchSize` number of random draws from the latent space, plot these results and the round-trip line profiles. The interpretation of these figures is discussed in the paper, but in short, the bars on the 2D histogram for the atmospheric profiles show the probability of the parameter value at each atmospheric node. The dashed black lines show the expected solution. The thin bars on the line profiles show the round trip (i.e. forward(inverse(lineProfiles))) in histogram form.
-
-# In[106]:
-
-
-get_ipython().run_cell_magic('time', '', "from matplotlib.colors import LogNorm, PowerNorm, LinearSegmentedColormap\n    \nmodel.eval()\nwith torch.no_grad():\n    x, y = next(iter(data.testLoader))\n    batchSize = 40000\n    y = torch.ones((batchSize, *y.shape[1:])) * y[0, :, :]\n    y = y.to(dev)\n    randn = lambda *x: torch.randn(*x, device=dev)\n    yz = model.outSchema.fill({'Halpha': y[:, 0], 'Ca8542': y[:, 1], 'LatentSpace': randn}, zero_pad_fn=pad_fn)\n    xOut = model(yz.to(dev), rev=True)\n    \n    yzRound = model(xOut)\n    zEdges = [data.z[0] - 0.5 * (data.z[1] - data.z[0])]\n    for i in range(data.z.shape[0] - 1):\n        zEdges.append(0.5 * (data.z[i] + data.z[i+1]))\n    zEdges.append(data.z[-1] + 0.5 * (data.z[-1] - data.z[-2]))\n    \n    wlHaEdges = [data.wls[0][0] - 0.5 * (data.wls[0][1] - data.wls[0][0])]\n    for i in range(data.wls[0].shape[0] - 1):\n        wlHaEdges.append(0.5 * (data.wls[0][i] + data.wls[0][i+1]))\n    wlHaEdges.append(data.wls[0][-1] + 0.5 * (data.wls[0][-1] - data.wls[0][-2]))\n    \n    wlCaEdges = [data.wls[1][0] - 0.5 * (data.wls[1][1] - data.wls[1][0])]\n    for i in range(data.wls[1].shape[0] - 1):\n        wlCaEdges.append(0.5 * (data.wls[1][i] + data.wls[1][i+1]))\n    wlCaEdges.append(data.wls[1][-1] + 0.5 * (data.wls[1][-1] - data.wls[1][-2]))\n    \n    neEdges = np.linspace(8, 15, num=101)\n    tEdges = np.linspace(3, 8, num=101)\n    minVel = np.min(np.median(xOut[:, model.inSchema.vel], axis=0))\n    minVel = np.sign(minVel) * 2 * np.abs(minVel) if minVel <= 0 else 0.9 * minVel\n    maxVel = 2 * np.max(np.median(logvel_to_vel(xOut[:, model.inSchema.vel]), axis=0))\n    velEdges = np.linspace(minVel, maxVel, num=101)\n    \n    haIntEdges = np.linspace(0.9 * np.min(np.median(yzRound[:, model.outSchema.Halpha], axis=0)), 1.1 * np.max(np.median(yzRound[:, model.outSchema.Halpha], axis=0)), num=201)\n    caIntEdges = np.linspace(0.9 * np.min(np.median(yzRound[:, model.outSchema.Ca8542], axis=0)), 1.1 * np.max(np.median(yzRound[:, model.outSchema.Ca8542], axis=0)), num=201)\n    \n    cmapNe = [(1.0,1.0,1.0,0.0), (51/255, 187/255, 238/255, 1.0)]\n    neColors = LinearSegmentedColormap.from_list('ne', cmapNe)\n    cmapTemp = [(1.0,1.0,1.0,0.0), (238/255, 119/255, 51/255, 1.0)]\n    tempColors = LinearSegmentedColormap.from_list('temp', cmapTemp)\n    cmapVel = [(1.0,1.0,1.0,0.0), (238/255, 51/255, 119/255, 1.0)]\n    velColors = LinearSegmentedColormap.from_list('vel', cmapVel)\n\n        \n    fig, ax = plt.subplots(2, 2, figsize=(9,7))\n    ax1 = ax[0,0].twinx()\n    ax = ax.ravel()\n    ax = [*ax[:3], ax[2].twinx(), *ax[3:]]\n    \n    ax[0].plot(data.wls[0].numpy(), yz[0, model.outSchema.Halpha].cpu().numpy(), '--', zorder=3)\n    ax[1].plot(data.wls[1].numpy(), yz[0, model.outSchema.Ca8542].cpu().numpy(), '--', zorder=3)\n    \n    powerIdx = 0.3\n    ax[0].hist2d(torch.cat([data.wls[0]] * yzRound.shape[0]).numpy(), yzRound[:, model.outSchema.Halpha].cpu().numpy().reshape((-1,)), bins=(wlHaEdges, haIntEdges), cmap='gray_r', norm=PowerNorm(powerIdx))\n    ax[1].hist2d(torch.cat([data.wls[1]] * yzRound.shape[0]).numpy(), yzRound[:, model.outSchema.Ca8542].cpu().numpy().reshape((-1,)), bins=(wlCaEdges, caIntEdges), cmap='gray_r', norm=PowerNorm(powerIdx))\n    ax[2].hist2d(torch.cat([data.z] * xOut.shape[0]).numpy(), xOut[:, model.inSchema.ne].cpu().numpy().reshape((-1,)), bins=(zEdges, neEdges), cmap=neColors, norm=PowerNorm(powerIdx))\n    ax[3].hist2d(torch.cat([data.z] * xOut.shape[0]).numpy(), xOut[:, model.inSchema.temperature].cpu().numpy().reshape((-1,)), bins=(zEdges, tEdges), cmap=tempColors, norm=PowerNorm(powerIdx))\n    ax[4].hist2d(torch.cat([data.z] * xOut.shape[0]).numpy(), logvel_to_vel(xOut[:, model.inSchema.vel].cpu()).numpy().reshape((-1,)), bins=(zEdges, velEdges), cmap=velColors, norm=PowerNorm(powerIdx))\n    \n    ax[2].plot(data.z.numpy(), x[0, 0].numpy(), 'k--')\n    ax[3].plot(data.z.numpy(), x[0, 1].numpy(), 'k--')\n    ax[4].plot(data.z.numpy(), logvel_to_vel(x[0, 2]).numpy(), 'k--')\n    \n    ax[0].set_title(r'H$\\alpha$')\n    ax[1].set_title(r'Ca II 8542$\\AA$')\n    ax[0].set_xlabel(r'Wavelength [$\\AA$]')\n    ax[1].set_xlabel(r'Wavelength [$\\AA$]')\n    ax[0].set_ylabel(r'Normalised Intensity')\n    \n    ax[2].set_xlabel('z [cm]')\n    ax[4].set_xlabel('z [cm]')\n    ax[2].set_ylabel(r'log $n_e$ [cm$^{-3}$]', color=(cmapNe[-1]))\n    ax[3].set_ylabel(r'log T [K]', color=(cmapTemp[-1]))\n    ax[4].set_ylabel(r'v [km s$^{-1}$]', color=(cmapVel[-1]))\n    ax[2].xaxis.set_major_formatter(oom_formatter(8))\n    ax[4].xaxis.set_major_formatter(oom_formatter(8))\n    fig.tight_layout()")
-
-
-# In[107]:
-
-
-# Save the above figure if desired
-fig.savefig('InverseProcess2.png', dpi=300)
-
+main()
+exit()

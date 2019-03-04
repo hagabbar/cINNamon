@@ -3,6 +3,9 @@ import torch
 import torch.utils.data
 from time import time
 from scipy.stats import gaussian_kde
+import matplotlib
+import matplotlib.pyplot as plt
+from sys import exit
 
 nsg = 5  # max number of sine-gaussian parameters
 sg_default = 0.2  # default value of fixed sine-gaussian parameters
@@ -42,7 +45,7 @@ def generate(tot_dataset_size,ndata=8,usepars=[0,1],sigma=0.1,seed=0):
 
     return pars, data, xvec, sig, names
 
-def get_lik(ydata,sigma=0.2,usepars=[0,1],Nsamp=1000):
+def get_lik(ydata,ypars,out_dir,samp_idx,sigma=0.2,usepars=[0,1],Nsamp=1000):
     """
     returns samples from the posterior obtained using trusted 
     techniques
@@ -109,7 +112,7 @@ def get_lik(ydata,sigma=0.2,usepars=[0,1],Nsamp=1000):
     N = ydata.size              # length of timeseries data
     x = np.arange(N)/float(N)   # time vector
     Nens = 100                  # number of ensemble points
-    Nburnin = 500               # number of burn-in samples
+    Nburnin = 5000              # number of burn-in samples
     Nsamples = 500              # number of final posterior samples
     p0 = [np.random.rand(ndims) for i in range(Nens)]
 
@@ -130,9 +133,46 @@ def get_lik(ydata,sigma=0.2,usepars=[0,1],Nsamp=1000):
     timeemcee = (t1-t0)
     print("Time taken to run 'emcee' is {} seconds".format(timeemcee))
 
+    all_burnin_samples = sampler.chain[:, Nburnin:, :].reshape((-1, ndims))
+    all_lnp = sampler.lnprobability[:,Nburnin:].flatten()
+    max_lnp = np.max(all_lnp)
+    idx = np.argwhere(all_lnp>max_lnp-12.0).squeeze()
+    samples_emcee = all_burnin_samples[idx,:]
+
     # extract the samples (removing the burn-in)
-    samples_emcee = sampler.chain[:, Nburnin:, :].reshape((-1, ndims))
+    burnin_samples_emcee = sampler.chain[:, :Nburnin, :].reshape((-1, ndims))
+    #samples_emcee = sampler.chain[:, Nburnin:, :].reshape((-1, ndims))
+    plt.plot()
     idx = np.random.randint(low=0,high=samples_emcee.shape[0],size=Nsamp)
+
+    
+
+    # plot emcee chains
+    cnt=1
+    plt.figure(figsize=(10,10))
+    fig, axes = plt.subplots(ndims,2,figsize=(10,10))
+    for i in range(ndims):
+        for j in range(50):
+            axes[i,0].plot(sampler.chain[j,:Nburnin,i],'-',markersize=0.1,alpha=0.5)
+        #axes[i,0].plot(burnin_samples_emcee[:,i],'.',markersize=0.2)
+        axes[i,0].plot([0,len(sampler.chain[j,:Nburnin,i])],[ypars[i],ypars[i]],'-k')
+        axes[i,0].set_ylim([0,1])
+        if i == 0: axes[i,0].set_title('Burnin')
+        axes[i,0].set_ylabel(parnames[i])
+        if i == (ndims-1): axes[i,0].set_xlabel('sample')
+
+        for j in range(50):
+            axes[i,1].plot(sampler.chain[j,Nburnin:,i],'-',markersize=0.1,alpha=0.5)
+        #axes[i,1].plot(samples_emcee[:,i],'.',markersize=0.2)
+        axes[i,1].plot([0,len(sampler.chain[j,Nburnin:,i])],[ypars[i],ypars[i]],'-k')
+        axes[i,1].set_ylim([0,1])
+        if i == 0: axes[i,1].set_title('After Burnin')
+        axes[i,1].set_ylabel(parnames[i])
+        if i == (ndims-1): axes[i,1].set_xlabel('sample')
+        cnt+=2
+    plt.savefig('%semcee_chains%d.pdf' % (out_dir,samp_idx))
+    plt.close()
+
     return samples_emcee[idx,:]
 
 def overlap(x,y):
