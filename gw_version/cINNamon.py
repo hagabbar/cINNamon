@@ -54,6 +54,7 @@ from FrEIA.framework import InputNode, OutputNode, Node, ReversibleGraphNet
 from FrEIA.modules import rev_multiplicative_layer, F_fully_connected, F_conv
 
 import chris_data as data_maker
+import bilby_pe
 
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 #from IPython.core.display import display, HTML
@@ -61,7 +62,7 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # global parameters
 sig_model = 'sg'   # the signal model to use
-usepars = [0,1]    # parameter indices to use
+usepars = [0,1,2,3]    # parameter indices to use
 run_label='gpu0'
 out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gw_results/multipar/%s/" % run_label
 do_posterior_plots=True
@@ -86,7 +87,7 @@ dropout=0.0
 batchsize=1600
 filtsize = 3       # TODO
 clamp=2.0          # TODO
-tot_dataset_size=50000 # 2**20 TODO really should use 1e8 once cpu is fixed
+tot_dataset_size=1000 # 2**20 TODO really should use 1e8 once cpu is fixed
 
 tot_epoch=50000
 lr=1.0e-3
@@ -115,7 +116,7 @@ dt = T/ndata        # sampling time (Sec)
 fnyq = 0.5/dt   # Nyquist frequency (Hz)
 if multi_par==True: bound = [0.0,1.0,0.0,1.0,0.0,1.0*fnyq,0.0,3.0,0.0,1.0]
 else: bound = [0.0,1.0,0.0,1.0] # effective bound for the liklihood
-parnames=['mc','q','t0','phi']  # eventually need to change q for eta
+parnames=['mc','eta','phi','t0']  # eventually need to change q for eta
 
 def make_contour_plot(ax,x,y,dataset,color='red',flip=False, kernel_lalinf=False, kernel_cnn=False, bounds=[0.0,1.0,0.0,1.0]):
     """ Module used to make contour plots in pe scatter plots.
@@ -244,38 +245,28 @@ def load_gw_data(seed=0):
     return signal_ts_noise, signal_pars, xvec, signal_ts_noisefree, names 
 
 def main():
-    # load in gw templates and signals
-    signal_train_images, signal_train_pars, x, sig, parnames = load_gw_data()
-
-    if add_noise_real:
-        train_array = []
-        train_pe_array = []
-        for i in range(len(signal_train_images)):
-            for j in range(n_real):
-                train_array.append([signal_train_images[i] + np.random.normal(loc=0.0, scale=n_sig)])
-                train_pe_array.append([signal_train_pars[i]])
-        train_array = np.array(train_array)
-        train_pe_array = np.array(train_pe_array)
-        train_array = train_array.reshape(train_array.shape[0],train_array.shape[2])
-        train_pe_array = train_pe_array.reshape(train_pe_array.shape[0],train_pe_array.shape[2])
-    else:
-        for i in range(len(signal_train_images)):
-            signal_train_images[i] += np.random.normal(loc=0.0, scale=sigma)
 
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
 
-    # declare gw variants of positions and labels
-    labels = torch.tensor(signal_train_images, dtype=torch.float)
-    pos = torch.tensor(signal_train_pars, dtype=torch.float)
-    print("Loaded data ...")
+    if not load_dataset:
+        signal_train_images, sig, signal_train_pars = bilby_pe.run(N_gen=tot_dataset_size,make_train_samp=True,make_test_samp=False)
 
-    hf = h5py.File('benchmark_data_%s.h5py' % run_label, 'w')
-    hf.create_dataset('pos', data=pos)
-    hf.create_dataset('labels', data=labels)
-    hf.create_dataset('x', data=x)
-    hf.create_dataset('sig', data=sig)
-    hf.create_dataset('parnames', data=np.string_(parnames))
+        #signal_train_images = signal_train_images.reshape((signal_train_images.shape[0],signal_train_images.shape[2]))
+        # declare gw variants of positions and labels
+        labels = torch.tensor(signal_train_images, dtype=torch.float)
+        pos = torch.tensor(signal_train_pars, dtype=torch.float)
+        sig = torch.tensor(sig, dtype=torch.float)
+        x = np.arange(ndata)/float(ndata)
+        
+        print("Loaded data ...")
+
+        hf = h5py.File('benchmark_data_%s.h5py' % run_label, 'w')
+        hf.create_dataset('pos', data=pos)
+        hf.create_dataset('labels', data=labels)
+        hf.create_dataset('x', data=x)
+        hf.create_dataset('sig', data=sig)
+        hf.create_dataset('parnames', data=np.string_(parnames))
 
     data = AtmosData([dataLocation1], test_split, resampleWl=None)
     data.split_data_and_init_loaders(batchsize)
@@ -286,7 +277,8 @@ def main():
     sig_test = data.sig_test
 
     ndim_x = len(usepars)
-    print('Computing MCMC posterior samples')
+    print('Computing Bilby posterior samples')
+    exit()
     if do_mcmc or not load_dataset:
         # precompute true posterior samples on the test data
         cnt = 0

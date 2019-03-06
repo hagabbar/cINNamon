@@ -120,9 +120,6 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det,ifos,event_time):
     hc:
         h-cross version of GW waveform
     """
-    # make basic time vector
-    tvec = np.arange(len(hp))/float(fs)
-
     # compute antenna response and apply
     Fp=ifos.antenna_response(ra,dec,float(event_time),psi,'plus')
     Fc=ifos.antenna_response(ra,dec,float(event_time),psi,'cross')
@@ -154,16 +151,23 @@ def gen_template(duration,sampling_frequency,pars):
     wfg = waveform_generator
     wfg.parameters = injection_parameters
     freq_signal = wfg.frequency_domain_strain()
+    time_signal = wfg.time_domain_strain()
 
     # Set up interferometers.  In this case we'll use two interferometers
     # (LIGO-Hanford (H1), LIGO-Livingston (L1). These default to their design
     # sensitivity
     ifos = bilby.gw.detector.InterferometerList([pars['det']])
+
+    # set noise to be colored Gaussian noise
     ifos.set_strain_data_from_power_spectral_densities(
         sampling_frequency=sampling_frequency, duration=duration,
         start_time=injection_parameters['geocent_time'] - 3.0)
-    ifos.inject_signal(waveform_generator=waveform_generator,
+
+    # inject signal
+    signal_noise = ifos[0].strain_data.frequency_domain_strain
+    signal_pols=ifos.inject_signal(waveform_generator=waveform_generator,
                        parameters=injection_parameters)
+    
 
     whiten_hp = freq_signal['plus']/ifos[0].amplitude_spectral_density_array
     whiten_hc = freq_signal['cross']/ifos[0].amplitude_spectral_density_array
@@ -193,12 +197,29 @@ def gen_template(duration,sampling_frequency,pars):
     # the window has dropped to 50% at the Tobs boundaries
     ht_shift=ht_shift.reshape(ht_shift.shape[0])
     ht_shift[:] *= win
+    ht = ht_shift
 
-    #plt.plot(ht_shift)
+    # strain data is noise. wfg is signal
+
+
+    # how to get sig+noise time series and whitened sig+noise time series
+    # ifos[0].strain_data.time_domain_strain
+    # np.fft.irfft(ifos[0].whitened_frequency_domain_strain)
+
+    # whiten noise
+    white_noise_sig = np.fft.irfft(signal_noise/ifos[0].amplitude_spectral_density_array,(int(duration*sampling_frequency)))
+
+    # combine noise and noise-free signal
+    ht_noisy = ht + white_noise_sig 
+    #plt.plot(white_noise_sig+ht_shift, alpha=0.5)
+    #plt.plot(white_noise_sig, alpha=0.5)
     #plt.savefig('/home/hunter.gabbard/public_html/test.png')
     #plt.close()
+    #print('Done')
+    #exit()
 
-    return ht_shift,injection_parameters,ifos,waveform_generator
+
+    return ht,ht_noisy,injection_parameters,ifos,waveform_generator
 
 def gen_masses(m_min=5.0,M_max=100.0,mdist='astro'):
     """ function returns a pair of masses drawn from the appropriate distribution
@@ -273,9 +294,9 @@ def gen_par(fs,T_obs,geocent_time,mdist='astro'):
 
     return m12[0], m12[1], mc, eta, phase, geocent_time
 
-def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=29.,
+def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
            geocent_time=1126259642.5,phase=1.3,N_gen=1000,make_test_samp=True,
-           make_train_samp=False):
+           make_train_samp=False,run_label='test_results'):
     # Set the duration and sampling frequency of the data segment that we're
     # going to inject the signal into
     duration = duration
@@ -294,7 +315,7 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=29.,
 
     # Specify the output directory and the name of the simulation.
     outdir = 'gw_data/bilby_output'
-    label = 'fast_tutorial'
+    label = run_label
     bilby.core.utils.setup_logger(outdir=outdir, label=label)
 
     # Set up a random seed for result reproducibility.  This is optional!
@@ -306,20 +327,22 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=29.,
     # spins of both black holes (a, tilt, phi), etc.
 
     # generate training samples
-    if make_train_samp:
+    if make_train_samp == True:
         train_samples = []
         train_pars = []
         for i in range(N_gen):
             # choose waveform parameters here
             pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time']=gen_par(duration,sampling_frequency,geocent_time)
-            train_samples.append([gen_template(duration,sampling_frequency,
-                                   pars)[0]])
+            train_samples.append(gen_template(duration,sampling_frequency,
+                                   pars)[0:2])
             train_pars.append([mc,eta,pars['phase'],pars['geocent_time']])
             print('Made waveform %d/%d' % (i,N_gen))
-        return np.array(train_samples),np.array(train_pars)
+        train_samples_noisefree = np.array(train_samples)[:,0,:]
+        train_samples_noisy = np.array(train_samples)[:,1,:]
+        return train_samples_noisy,train_samples_noisefree,np.array(train_pars)
     # generate testing sample        
-    if make_test_samp:
-        test_sample,injection_parameters,ifos,waveform_generator = gen_template(duration,sampling_frequency,
+    if make_test_samp == True:
+        test_samp_noisefree,test_samp_noisy,injection_parameters,ifos,waveform_generator = gen_template(duration,sampling_frequency,
                                    pars)
 
     # Set up a PriorDict, which inherits from dict.
@@ -351,14 +374,15 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=29.,
     # Run sampler.  In this case we're going to use the `dynesty` sampler
     result = bilby.run_sampler(
         likelihood=likelihood, priors=priors, sampler='dynesty', npoints=1000,
-        injection_parameters=injection_parameters, outdir=outdir, label=label)
+        injection_parameters=injection_parameters, outdir=outdir, label=label,
+        save='hdf5')
 
     # Make a corner plot.
     result.plot_corner()
 
     # save test sample waveform
     hf = h5py.File('%s/test_sample-%s.h5py' % (out_dir,run_label), 'w')
-    hf.create_dataset('waveform', data=test_sample)
+    hf.create_dataset('noisy_waveform', data=test_samp_noisy)
+    hf.create_dataset('noisefree_waveform', data=test_samp_noisefree)
     hf.close()
 
-run()

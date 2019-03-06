@@ -131,7 +131,7 @@ class DataSchema1D:
                     if callable(entry):
                         reifiedSchema.append(entry(batchSize, s[1]))
                     else:
-                        if s[0] == 'mc' or s[0] == 'q': #or s[0] == 'tau' or s[0] == 'phi': 
+                        if s[0] == 'mc' or s[0] == 'eta': or s[0] == 'phi' or s[0] == 't0': 
                             entry = entry.reshape(entry.shape[0],1)
                         reifiedSchema.append(entry)
         except KeyError as e:
@@ -311,9 +311,9 @@ class RadynversionTrainer:
             yClean = y.clone()
 
             xp = self.model.inSchema.fill({'mc': x[:, 0], 
-                                           'q': x[:, 1]}, 
-                                           #'tau': x[:, 2],
-                                           #'phi': x[:, 3]},
+                                           'eta': x[:, 1]}, 
+                                           'phi': x[:, 2],
+                                           't0': x[:, 3]},
                                           zero_pad_fn=pad_fn)
             yzp = self.model.outSchema.fill({'timeseries': y[:], 
                                              'LatentSpace': randn},
@@ -363,15 +363,15 @@ class RadynversionTrainer:
             #                    outRevRand[:, self.model.inSchema.vel]),
             #                   dim=1)
             # lBackward = self.wRev * wRevScale * self.loss_backward(xBack, x.reshape(self.miniBatchSize, -1))
-            lBackward = self.wRev * wRevScale * self.loss_backward(outRevRand[:, self.model.inSchema.mc[0]:self.model.inSchema.q[-1]+1], 
-                                                                   xp[:, self.model.inSchema.mc[0]:self.model.inSchema.q[-1]+1])
+            lBackward = self.wRev * wRevScale * self.loss_backward(outRevRand[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1], 
+                                                                   xp[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1])
 
             scale = wRevScale if wRevScale != 0 else 1.0
             losses[2] += lBackward.data.item() / (self.wRev * scale)
             #TODO: may need to uncomment this
             #lBackward2 += 0.5 * self.wPred * self.loss_fit(outRev, xp)
-            lBackward2 = 0.5 * self.wPred * self.loss_fit(outRev[:, self.model.inSchema.mc[0]:self.model.inSchema.q[-1]+1], 
-                                                               xp[:, self.model.inSchema.mc[0]:self.model.inSchema.q[-1]+1])
+            lBackward2 = 0.5 * self.wPred * self.loss_fit(outRev[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1], 
+                                                               xp[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1])
             losses[3] += lBackward2.data.item() / self.wPred * 2
             lBackward += lBackward2
             
@@ -409,9 +409,9 @@ class RadynversionTrainer:
                 x, y = x.to(self.dev), y.to(self.dev)
 
                 inp = self.model.inSchema.fill({'mc': x[:, 0],
-                                                'q': x[:, 1]},
-                                                #'tau': x[:, 2],
-                                                #'phi': x[:, 3]},
+                                                'eta': x[:, 1]},
+                                                'phi': x[:, 2],
+                                                't0': x[:, 3]},
                                                zero_pad_fn=pad_fn)
                 inpBack = self.model.outSchema.fill({'timeseries': y[:],
                                                      'LatentSpace': randn},
@@ -443,9 +443,9 @@ class RadynversionTrainer:
             pad_fn = lambda *x: torch.zeros(*x, device=self.dev) # 10 * torch.ones(*x, device=self.dev)
             randn = lambda *x: torch.randn(*x, device=self.dev)
             xp = self.model.inSchema.fill({'mc': x1[:, 0],
-                                           'q': x1[:, 1]},
-                                           #'tau': x1[:, 2],
-                                           #'phi': x1[:, 3]},
+                                           'eta': x1[:, 1]},
+                                           'phi': x1[:, 2],
+                                           't0': x1[:, 3]},
                                           zero_pad_fn=pad_fn)
             yp = self.model.outSchema.fill({'timeseries': y1[:], 
                                            'LatentSpace': randn},
@@ -468,7 +468,7 @@ class RadynversionTrainer:
 
             for mm in self.mmFns:
                 mmdValsFor.append(mm(yForNp, ynp).item())
-                mmdValsBack.append(mm(xp[:, self.model.inSchema.mc[0]:self.model.inSchema.q[-1]+1], xBack[:, self.model.inSchema.mc[0]:self.model.inSchema.q[-1]+1]).item())
+                mmdValsBack.append(mm(xp[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1], xBack[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1]).item())
 
 
             def find_new_mmd_idx(a):
@@ -531,9 +531,9 @@ class AtmosData:
         data['pos']=data['pos'][:-test_split]
         data['labels']=data['labels'][:-test_split]
         self.mc = torch.tensor(data['pos'][0]).float()#.log10_()
-        self.q = torch.tensor(data['pos'][1]).float()#.log10_()
-        #self.tau = torch.tensor(data['pos'][2]).float()#.log10()
-        #self.phi = torch.tensor(data['pos'][3]).float()
+        self.eta = torch.tensor(data['pos'][1]).float()#.log10_()
+        self.phi = torch.tensor(data['pos'][2]).float()#.log10()
+        self.t0 = torch.tensor(data['pos'][3]).float()
         self.timeseries = torch.tensor(data['labels'][:]).float()#.log10()
         self.atmosIn=data['pos'][:]
         self.atmosOut=data['labels'][:]
