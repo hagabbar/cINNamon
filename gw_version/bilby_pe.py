@@ -133,8 +133,8 @@ def gen_template(duration,sampling_frequency,pars):
 
     # fix parameters here
     injection_parameters = dict(
-        mass_1=pars['m1'], mass_2=pars['m2'], a_1=0.1, a_2=0.1, tilt_1=0.1, tilt_2=0.1,
-        phi_12=0.1, phi_jl=0.1, luminosity_distance=pars['lum_dist'], theta_jn=pars['theta_jn'], psi=pars['psi'],
+        mass_1=pars['m1'], mass_2=pars['m2'], a_1=0.0, a_2=0.0, tilt_1=0.0, tilt_2=0.0,
+        phi_12=0.0, phi_jl=0.0, luminosity_distance=pars['lum_dist'], theta_jn=pars['theta_jn'], psi=pars['psi'],
         phase=pars['phase'], geocent_time=pars['geocent_time'], ra=pars['ra'], dec=pars['dec'])
 
     # Fixed arguments passed into the source model
@@ -374,17 +374,17 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
         maximum=injection_parameters['geocent_time'] + duration/2,
         name='geocent_time', latex_label='$t_c$', unit='$s$')
     # fix the following parameter priors
-    #priors['a_1'] = 0
-    #priors['a_2'] = 0
-    #priors['tilt_1'] = 0
-    #priors['tilt_2'] = 0
-    #priors['phi_12'] = 0
-    #priors['phi_jl'] = 0
-    #priors['ra'] = 1.375
-    #priors['dec'] = -1.2108
-    #priors['psi'] = 2.659
-    #priors['theta_jn'] = 0.4
-    #priors['luminosity_distance'] =  bilby.gw.prior.UniformComovingVolume(name='luminosity_distance', minimum=1e2, maximum=4e2, unit='Mpc')
+    priors['a_1'] = 0
+    priors['a_2'] = 0
+    priors['tilt_1'] = 0
+    priors['tilt_2'] = 0
+    priors['phi_12'] = 0
+    priors['phi_jl'] = 0
+    priors['ra'] = 1.375
+    priors['dec'] = -1.2108
+    priors['psi'] = 2.659
+    priors['theta_jn'] = 0.4
+    priors['luminosity_distance'] =  bilby.gw.prior.UniformComovingVolume(name='luminosity_distance', minimum=1e2, maximum=4e2, unit='Mpc')
 
     # all pars not included from list above will have pe done on them
     for key in ['a_1', 'a_2', 'tilt_1', 'tilt_2', 'phi_12', 'phi_jl', 'theta_jn', 'psi', 'ra',
@@ -399,7 +399,7 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
 
     # Run sampler.  In this case we're going to use the `dynesty` sampler
     #dynesty=bilby.core.sampler.dynesty.Dynesty(likelihood=likelihood,priors=priors,dlogz=30.)
-    result = bilby.run_sampler(dlogz=30.,
+    result = bilby.run_sampler(dlogz=300.,
         likelihood=likelihood, priors=priors, sampler='dynesty', npoints=500,
         injection_parameters=injection_parameters, outdir=outdir, label=label,
         save='hdf5')
@@ -408,14 +408,10 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
     result.plot_corner()
 
     # save test sample waveform
-    #hf = h5py.File('%s/test_sample-%s.h5py' % (outdir,run_label), 'w')
-    #hf.create_dataset('noisy_waveform', data=test_samp_noisy)
-    #hf.create_dataset('noisefree_waveform', data=test_samp_noisefree)
-    #hf.close()
+    hf = h5py.File('%s/test_sample-%s.h5py' % (outdir,run_label), 'w')
+    hf.create_dataset('noisy_waveform', data=test_samp_noisy)
+    hf.create_dataset('noisefree_waveform', data=test_samp_noisefree)
+    hf.close()
 
-    posterior = []
     print('finished running pe')
-    exit()
-
-    return posterior
 
