@@ -321,7 +321,7 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
     bilby.core.utils.setup_logger(outdir=outdir, label=label)
 
     # Set up a random seed for result reproducibility.  This is optional!
-    np.random.seed(88170235)
+    #np.random.seed(88170235)
 
     # We are going to inject a binary black hole waveform.  We first establish a
     # dictionary of parameters that includes all of the different waveform
@@ -399,7 +399,7 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
 
     # Run sampler.  In this case we're going to use the `dynesty` sampler
     #dynesty=bilby.core.sampler.dynesty.Dynesty(likelihood=likelihood,priors=priors,dlogz=30.)
-    result = bilby.run_sampler(dlogz=300.,
+    result = bilby.run_sampler(
         likelihood=likelihood, priors=priors, sampler='dynesty', npoints=500,
         injection_parameters=injection_parameters, outdir=outdir, label=label,
         save='hdf5')
