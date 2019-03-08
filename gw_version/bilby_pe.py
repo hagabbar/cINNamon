@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 Tutorial to demonstrate running parameter estimation on a reduced parameter
 space for an injected signal.
@@ -20,6 +19,7 @@ import scipy
 import lalsimulation
 import lal
 import time
+import h5py
 #from pylal import antenna, cosmography
 
 def whiten_data(data,duration,sample_rate,psd,flag='fd'):
@@ -133,8 +133,8 @@ def gen_template(duration,sampling_frequency,pars):
 
     # fix parameters here
     injection_parameters = dict(
-        mass_1=pars['m1'], mass_2=pars['m2'], a_1=0.0, a_2=0.0, tilt_1=0.0, tilt_2=0.0,
-        phi_12=0.0, phi_jl=0.0, luminosity_distance=pars['lum_dist'], theta_jn=pars['theta_jn'], psi=pars['psi'],
+        mass_1=pars['m1'], mass_2=pars['m2'], a_1=0.1, a_2=0.1, tilt_1=0.1, tilt_2=0.1,
+        phi_12=0.1, phi_jl=0.1, luminosity_distance=pars['lum_dist'], theta_jn=pars['theta_jn'], psi=pars['psi'],
         phase=pars['phase'], geocent_time=pars['geocent_time'], ra=pars['ra'], dec=pars['dec'])
 
     # Fixed arguments passed into the source model
@@ -161,11 +161,11 @@ def gen_template(duration,sampling_frequency,pars):
     # set noise to be colored Gaussian noise
     ifos.set_strain_data_from_power_spectral_densities(
         sampling_frequency=sampling_frequency, duration=duration,
-        start_time=injection_parameters['geocent_time'] - 3.0)
+        start_time=injection_parameters['geocent_time'] - 3)
 
     # inject signal
     signal_noise = ifos[0].strain_data.frequency_domain_strain
-    signal_pols=ifos.inject_signal(waveform_generator=waveform_generator,
+    ifos.inject_signal(waveform_generator=waveform_generator,
                        parameters=injection_parameters)
     
 
@@ -279,7 +279,6 @@ def gen_par(fs,T_obs,geocent_time,mdist='astro'):
     # define distribution params
     m_min = 5.0         # 5 rest frame component masses
     M_max = 100.0       # 100 rest frame total mass
-    log_m_max = np.log(M_max - m_min)
 
     m12, mc, eta = gen_masses(m_min,M_max,mdist=mdist)
     M = np.sum(m12)
@@ -289,13 +288,16 @@ def gen_par(fs,T_obs,geocent_time,mdist='astro'):
     phase = 2.0*np.pi*np.random.rand()
     print('{}: selected bbh reference phase = {}'.format(time.asctime(),phase))
 
-    geocent_time = np.random.uniform(low=geocent_time-1,high=geocent_time+1)
+    geocent_time = np.random.uniform(low=geocent_time-0.5,high=geocent_time+0.5)
     print('{}: selected bbh GPS time = {}'.format(time.asctime(),geocent_time))
 
-    return m12[0], m12[1], mc, eta, phase, geocent_time
+    lum_dist = np.random.uniform(low=1e2, high=4e2)
+    print('{}: selected bbh luminosity distance = {}'.format(time.asctime(),lum_dist))
+
+    return m12[0], m12[1], mc, eta, phase, geocent_time, lum_dist
 
 def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
-           geocent_time=1126259642.5,phase=1.3,N_gen=1000,make_test_samp=True,
+           geocent_time=1126259642.5,lum_dist=2000.,phase=1.3,N_gen=1000,make_test_samp=False,
            make_train_samp=False,run_label='test_results'):
     # Set the duration and sampling frequency of the data segment that we're
     # going to inject the signal into
@@ -306,7 +308,7 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
     dec=-1.2108
     psi=2.659
     theta_jn=0.4
-    lum_dist=2000.
+    lum_dist=lum_dist
     mc=0
     eta=0
 
@@ -332,19 +334,30 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
         train_pars = []
         for i in range(N_gen):
             # choose waveform parameters here
-            pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time']=gen_par(duration,sampling_frequency,geocent_time)
+            pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time'], pars['lum_dist']=gen_par(duration,sampling_frequency,geocent_time)
             train_samples.append(gen_template(duration,sampling_frequency,
                                    pars)[0:2])
-            train_pars.append([mc,eta,pars['phase'],pars['geocent_time']])
+            train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
             print('Made waveform %d/%d' % (i,N_gen))
         train_samples_noisefree = np.array(train_samples)[:,0,:]
         train_samples_noisy = np.array(train_samples)[:,1,:]
         return train_samples_noisy,train_samples_noisefree,np.array(train_pars)
-    # generate testing sample        
+
+    # generate testing sample 
+    opt_snr = 0       
     if make_test_samp == True:
-        test_samp_noisefree,test_samp_noisy,injection_parameters,ifos,waveform_generator = gen_template(duration,sampling_frequency,
+        # ensure that signal is loud enough (e.g. > detection threshold)
+        while opt_snr < 8:
+            # generate parameters
+            pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time'], pars['lum_dist']=gen_par(duration,sampling_frequency,geocent_time)
+            # make parameters have equal mass
+            pars['m1']=pars['m2']
+            # inject signal
+            test_samp_noisefree,test_samp_noisy,injection_parameters,ifos,waveform_generator = gen_template(duration,sampling_frequency,
                                    pars)
 
+            opt_snr = ifos[0].meta_data['optimal_SNR']
+            print(ifos[0].meta_data['optimal_SNR'])
     # Set up a PriorDict, which inherits from dict.
     # By default we will sample all terms in the signal models.  However, this will
     # take a long time for the calculation, so for this example we will set almost
@@ -357,23 +370,37 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
     # sampler.  If we do nothing, then the default priors get used.
     priors = bilby.gw.prior.BBHPriorDict()
     priors['geocent_time'] = bilby.core.prior.Uniform(
-        minimum=injection_parameters['geocent_time'] - 1,
-        maximum=injection_parameters['geocent_time'] + 1,
+        minimum=injection_parameters['geocent_time'] - duration/2,
+        maximum=injection_parameters['geocent_time'] + duration/2,
         name='geocent_time', latex_label='$t_c$', unit='$s$')
+    # fix the following parameter priors
+    #priors['a_1'] = 0
+    #priors['a_2'] = 0
+    #priors['tilt_1'] = 0
+    #priors['tilt_2'] = 0
+    #priors['phi_12'] = 0
+    #priors['phi_jl'] = 0
+    #priors['ra'] = 1.375
+    #priors['dec'] = -1.2108
+    #priors['psi'] = 2.659
+    #priors['theta_jn'] = 0.4
+    #priors['luminosity_distance'] =  bilby.gw.prior.UniformComovingVolume(name='luminosity_distance', minimum=1e2, maximum=4e2, unit='Mpc')
 
     # all pars not included from list above will have pe done on them
-    for key in ['a_1', 'a_2', 'tilt_1', 'tilt_2', 'phi_12', 'phi_jl', 'luminosity_distance', 'theta_jn', 'psi', 'ra',
+    for key in ['a_1', 'a_2', 'tilt_1', 'tilt_2', 'phi_12', 'phi_jl', 'theta_jn', 'psi', 'ra',
                 'dec']:
         priors[key] = injection_parameters[key]
 
     # Initialise the likelihood by passing in the interferometer data (ifos) and
     # the waveform generator
     likelihood = bilby.gw.GravitationalWaveTransient(
-        interferometers=ifos, waveform_generator=waveform_generator)
+        interferometers=ifos, waveform_generator=waveform_generator,
+        priors=priors)
 
     # Run sampler.  In this case we're going to use the `dynesty` sampler
-    result = bilby.run_sampler(
-        likelihood=likelihood, priors=priors, sampler='dynesty', npoints=1000,
+    #dynesty=bilby.core.sampler.dynesty.Dynesty(likelihood=likelihood,priors=priors,dlogz=30.)
+    result = bilby.run_sampler(dlogz=30.,
+        likelihood=likelihood, priors=priors, sampler='dynesty', npoints=500,
         injection_parameters=injection_parameters, outdir=outdir, label=label,
         save='hdf5')
 
@@ -381,8 +408,14 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
     result.plot_corner()
 
     # save test sample waveform
-    hf = h5py.File('%s/test_sample-%s.h5py' % (out_dir,run_label), 'w')
-    hf.create_dataset('noisy_waveform', data=test_samp_noisy)
-    hf.create_dataset('noisefree_waveform', data=test_samp_noisefree)
-    hf.close()
+    #hf = h5py.File('%s/test_sample-%s.h5py' % (outdir,run_label), 'w')
+    #hf.create_dataset('noisy_waveform', data=test_samp_noisy)
+    #hf.create_dataset('noisefree_waveform', data=test_samp_noisefree)
+    #hf.close()
+
+    posterior = []
+    print('finished running pe')
+    exit()
+
+    return posterior
 
