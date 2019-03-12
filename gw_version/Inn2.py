@@ -131,7 +131,7 @@ class DataSchema1D:
                     if callable(entry):
                         reifiedSchema.append(entry(batchSize, s[1]))
                     else:
-                        if s[0] == 'mc' or s[0] == 'eta': or s[0] == 'phi' or s[0] == 't0': 
+                        if s[0] == 'mc' or s[0] == 'lum_dist' or s[0] == 'phi' or s[0] == 't0': 
                             entry = entry.reshape(entry.shape[0],1)
                         reifiedSchema.append(entry)
         except KeyError as e:
@@ -311,7 +311,7 @@ class RadynversionTrainer:
             yClean = y.clone()
 
             xp = self.model.inSchema.fill({'mc': x[:, 0], 
-                                           'eta': x[:, 1]}, 
+                                           'lum_dist': x[:, 1], 
                                            'phi': x[:, 2],
                                            't0': x[:, 3]},
                                           zero_pad_fn=pad_fn)
@@ -409,7 +409,7 @@ class RadynversionTrainer:
                 x, y = x.to(self.dev), y.to(self.dev)
 
                 inp = self.model.inSchema.fill({'mc': x[:, 0],
-                                                'eta': x[:, 1]},
+                                                'eta': x[:, 1],
                                                 'phi': x[:, 2],
                                                 't0': x[:, 3]},
                                                zero_pad_fn=pad_fn)
@@ -443,7 +443,7 @@ class RadynversionTrainer:
             pad_fn = lambda *x: torch.zeros(*x, device=self.dev) # 10 * torch.ones(*x, device=self.dev)
             randn = lambda *x: torch.randn(*x, device=self.dev)
             xp = self.model.inSchema.fill({'mc': x1[:, 0],
-                                           'eta': x1[:, 1]},
+                                           'lum_dist': x1[:, 1],
                                            'phi': x1[:, 2],
                                            't0': x1[:, 3]},
                                           zero_pad_fn=pad_fn)
@@ -531,7 +531,7 @@ class AtmosData:
         data['pos']=data['pos'][:-test_split]
         data['labels']=data['labels'][:-test_split]
         self.mc = torch.tensor(data['pos'][0]).float()#.log10_()
-        self.eta = torch.tensor(data['pos'][1]).float()#.log10_()
+        self.lum_dist = torch.tensor(data['pos'][1]).float()#.log10_()
         self.phi = torch.tensor(data['pos'][2]).float()#.log10()
         self.t0 = torch.tensor(data['pos'][3]).float()
         self.timeseries = torch.tensor(data['labels'][:]).float()#.log10()

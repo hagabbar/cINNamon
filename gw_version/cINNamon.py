@@ -40,7 +40,6 @@ from scipy.interpolate import interp1d
 #matplotlib.use('Agg')
 import matplotlib
 import matplotlib.pyplot as plt
-#import matplotlib.pyplot as plt
 import torch
 import torch.optim
 import torch.utils.data
@@ -55,6 +54,7 @@ from FrEIA.modules import rev_multiplicative_layer, F_fully_connected, F_conv
 
 import chris_data as data_maker
 import bilby_pe
+import bilby
 
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 #from IPython.core.display import display, HTML
@@ -66,7 +66,7 @@ usepars = [0,1,2,3]    # parameter indices to use
 run_label='gpu0'
 out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gw_results/multipar/%s/" % run_label
 do_posterior_plots=True
-ndata=1024           # length of 1 data sample
+ndata=512           # length of 1 data sample
 ndim_x=len(usepars)           # number of parameters to PE on
 ndim_y = ndata     # length of 1 data sample
 
@@ -107,16 +107,15 @@ latentAlphas=None
 backwardAlphas=None # [1.4, 2, 5.5, 7]
 conv_nn = False    # Choose to use convolutional layers. TODO
 multi_par=True
-load_dataset=False
+load_dataset=True
 do_contours=True
-do_mcmc=True
+run_bilby_pe=True
 dataLocation1 = 'benchmark_data_%s.h5py' % run_label
 T = 1.0           # length of time series (s)
 dt = T/ndata        # sampling time (Sec)
 fnyq = 0.5/dt   # Nyquist frequency (Hz)
 if multi_par==True: bound = [0.0,1.0,0.0,1.0,0.0,1.0*fnyq,0.0,3.0,0.0,1.0]
 else: bound = [0.0,1.0,0.0,1.0] # effective bound for the liklihood
-parnames=['mc','eta','phi','t0']  # eventually need to change q for eta
 
 def make_contour_plot(ax,x,y,dataset,color='red',flip=False, kernel_lalinf=False, kernel_cnn=False, bounds=[0.0,1.0,0.0,1.0]):
     """ Module used to make contour plots in pe scatter plots.
@@ -246,11 +245,13 @@ def load_gw_data(seed=0):
 
 def main():
 
+    parnames=['mc','lum_dist','phi','t0']
+
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
 
     if not load_dataset:
-        signal_train_images, sig, signal_train_pars = bilby_pe.run(N_gen=tot_dataset_size,make_train_samp=True,make_test_samp=False)
+        signal_train_images, sig, signal_train_pars = bilby_pe.run(sampling_frequency=ndata,N_gen=tot_dataset_size,make_train_samp=True,make_test_samp=False)
 
         #signal_train_images = signal_train_images.reshape((signal_train_images.shape[0],signal_train_images.shape[2]))
         # declare gw variants of positions and labels
@@ -272,38 +273,44 @@ def main():
     data.split_data_and_init_loaders(batchsize)
 
     # seperate the test data for plotting
-    pos_test = data.pos_test
-    labels_test = data.labels_test
-    sig_test = data.sig_test
+    # pos = pars, labels = noisy_tseries, sig=noisefreetseries
+    pos_test = []
+    labels_test = []
+    sig_test = []
 
     ndim_x = len(usepars)
-    print('Computing Bilby posterior samples')
-    exit()
-    if do_mcmc or not load_dataset:
-        # precompute true posterior samples on the test data
-        cnt = 0
-        samples = np.zeros((r*r,N_samp,ndim_x))
-        for i in range(r):
-            for j in range(r):
-                samples[cnt,:,:] = data_maker.get_lik(np.array(labels_test[cnt,:]).flatten(),np.array(pos_test[cnt,:]),
-                                                      out_dir,cnt,sigma=sigma,usepars=usepars,Nsamp=N_samp)
-                print(samples[cnt,:10,:])
-                cnt += 1
+    bilby_result_dir = 'gw_data/bilby_output/bilby_output'
+    print('Loading bilby posterior samples')
+    # precompute true posterior samples on the test data
+    cnt = 0
+    samples = np.zeros((r*r,N_samp,ndim_x))
+    for i in range(r):
+        for j in range(r):
+            # TODO: remove this bandaged phase file calc
+            f = h5py.File('%s/samp_%d_result.hdf5' % (bilby_result_dir,cnt), 'r')
+            temp_post = h5py.File('%s/temp_post_%d.hdf5' % (bilby_result_dir,cnt), 'r')
+            phase = temp_post['phase_post'][:]
+            f=f['data']['samples'][:N_samp,:]
+            f_new = []
+            for samp in range(f.shape[0]):
+                eta = f[samp,0]*f[samp,1]/(f[samp,0]+f[samp,1])**2
+                mc = np.sum([f[samp,0],f[samp,1]])*eta**(3.0/5.0)
+                f_new.append([mc,f[samp,2],phase[samp],f[samp,3]])
+            samples[cnt,:,:]=np.array(f_new)
 
-        # save computationaly expensive mcmc/waveform runs
-        if load_dataset==True:
-            hf = h5py.File('benchmark_data_%s.h5py' % run_label, 'w')
-            hf.create_dataset('pos', data=data.pos)
-            hf.create_dataset('labels', data=data.labels)
-            hf.create_dataset('x', data=data.x)
-            hf.create_dataset('sig', data=data.sig)
-            hf.create_dataset('parnames', data=parnames)
-        hf.create_dataset('samples', data=np.string_(samples))
-        hf.close()
+            f = h5py.File('%s/test_sample-samp_%d.h5py' % (bilby_result_dir,cnt), 'r')
+            m1 = np.array(temp_post['mass_1'])
+            m2 = np.array(temp_post['mass_2'])
+            eta = m1*m2/(m1+m2)**2
+            mc = np.sum([m1,m2])*eta**(3.0/5.0)
+            pos_test.append([mc,np.array(temp_post['luminosity_distance']),np.array(temp_post['phase']),np.array(temp_post['geocent_time'])])
+            labels_test.append([np.array(f['noisy_waveform'])])
+            sig_test.append([np.array(f['noisefree_waveform'])])
+            cnt += 1
 
-    else:
-        samples=h5py.File(dataLocation1, 'r')['samples'][:]
-        parnames=h5py.File(dataLocation1, 'r')['parnames'][:]
+    pos_test = np.array(pos_test)
+    labels_test = np.array(labels_test).reshape(int(r*r),ndata)
+    sig_test = np.array(sig_test).reshape(int(r*r),ndata)
 
     # plot the test data examples
     plt.figure(figsize=(6,6))

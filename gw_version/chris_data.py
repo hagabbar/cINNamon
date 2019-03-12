@@ -9,7 +9,7 @@ from sys import exit
 
 nsg = 2  # max number of sine-gaussian parameters
 sg_default = 1.0  # default value of fixed sine-gaussian parameters
-parnames = ['mc','q','t0','phi']    # parameter names
+parnames = ['mc','eta','t0','phi']    # parameter names
 
 def sg(x,pars):
     """
