@@ -20,6 +20,7 @@ import lalsimulation
 import lal
 import time
 import h5py
+from scipy.ndimage.interpolation import shift
 #from pylal import antenna, cosmography
 
 def whiten_data(data,duration,sample_rate,psd,flag='fd'):
@@ -128,7 +129,7 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det,ifos,event_time):
 
     return ht, hp, hc
 
-def gen_template(duration,sampling_frequency,pars):
+def gen_template(duration,sampling_frequency,pars,ref_geocent_time):
     # whiten signal
 
     # fix parameters here
@@ -139,7 +140,7 @@ def gen_template(duration,sampling_frequency,pars):
 
     # Fixed arguments passed into the source model
     waveform_arguments = dict(waveform_approximant='IMRPhenomPv2',
-                              reference_frequency=50., minimum_frequency=20.)
+                              reference_frequency=20., minimum_frequency=20.)
 
     # Create the waveform_generator using a LAL BinaryBlackHole source function
     waveform_generator = bilby.gw.WaveformGenerator(
@@ -161,7 +162,7 @@ def gen_template(duration,sampling_frequency,pars):
     # set noise to be colored Gaussian noise
     ifos.set_strain_data_from_power_spectral_densities(
         sampling_frequency=sampling_frequency, duration=duration,
-        start_time=injection_parameters['geocent_time'] - 3)
+        start_time=ref_geocent_time-0.5)# - 0.75)
 
     # inject signal
     signal_noise = ifos[0].strain_data.frequency_domain_strain
@@ -172,56 +173,60 @@ def gen_template(duration,sampling_frequency,pars):
     whiten_hp = freq_signal['plus']/ifos[0].amplitude_spectral_density_array
     whiten_hc = freq_signal['cross']/ifos[0].amplitude_spectral_density_array
 
-    hp = np.fft.irfft(whiten_hp,int(duration*sampling_frequency))
-    hc = np.fft.irfft(whiten_hc,int(duration*sampling_frequency))
-
-    # TODO: may need to include event time in here somehow
-    #hp_rolled = np.pad(hp,(0,int(0.5*sampling_frequency)), mode='constant')[int(0.5*sampling_frequency):]
-    #hc_rolled = np.pad(hc,(0,int(0.5*sampling_frequency)), mode='constant')[int(0.5*sampling_frequency):]
-    hp_rolled = np.roll(hp.reshape(hp.shape[0],1),int(-0.5*sampling_frequency))
-    hc_rolled = np.roll(hc.reshape(hc.shape[0],1),int(-0.5*sampling_frequency))
-
-    ht_shift, hp_shift, hc_shift = make_bbh(hp_rolled,hc_rolled,sampling_frequency,pars['ra'],pars['dec'],pars['psi'],pars['det'],ifos[0],injection_parameters['geocent_time'])
-
     # make aggressive window to cut out signal in central region
     # window is non-flat for 1/8 of desired Tobs
     # the window has dropped to 50% at the Tobs boundaries
-    N = int(duration*sampling_frequency)
+    N = int(duration*sampling_frequency/2) + 1
     safe = 2.0                       # define the safe multiplication scale for the desired time length
     win = np.zeros(N)
-    tempwin = tukey(int((16.0/15.0)*N/safe),alpha=1.0/8.0)
-    win[int((N-tempwin.size)/128):int((N-tempwin.size)/128)+tempwin.size] = tempwin
+    tempwin = tukey(int((16.0/15.0)*N/safe),alpha=1.0/16.0)
+    win[int((N-tempwin.size)/2):int((N-tempwin.size)/2)+tempwin.size] = tempwin
 
     # apply aggressive window to cut out signal in central region
     # window is non-flat for 1/8 of desired Tobs
     # the window has dropped to 50% at the Tobs boundaries
-    ht_shift=ht_shift.reshape(ht_shift.shape[0])
-    ht_shift[:] *= win
-    ht = ht_shift
+    whiten_hp=whiten_hp.reshape(whiten_hp.shape[0])
+    whiten_hp[:] *= win
 
-    # strain data is noise. wfg is signal
+    whiten_hc=whiten_hc.reshape(whiten_hc.shape[0])
+    whiten_hc[:] *= win
 
+    hp = np.fft.irfft(whiten_hp,int(duration*sampling_frequency))
+    hc = np.fft.irfft(whiten_hc,int(duration*sampling_frequency))
+
+    # TODO: may need to include event time in here somehow
+    from scipy.ndimage.interpolation import shift
+    hp = shift(hp, int(-0.5*sampling_frequency), cval=0.0)
+    hc = shift(hc, int(-0.5*sampling_frequency), cval=0.0)
+    #hp = np.roll(hp,int(-0.5*sampling_frequency))
+    #hc = np.roll(hc,int(-0.5*sampling_frequency))
+
+    ht_shift, hp_shift, hc_shift = make_bbh(hp,hc,sampling_frequency,pars['ra'],pars['dec'],pars['psi'],pars['det'],ifos[0],injection_parameters['geocent_time'])
+    ht=shift(ht_shift, int((injection_parameters['geocent_time']-ref_geocent_time)*sampling_frequency), cval=0.0)
 
     # how to get sig+noise time series and whitened sig+noise time series
     # ifos[0].strain_data.time_domain_strain
     # np.fft.irfft(ifos[0].whitened_frequency_domain_strain)
 
     # whiten noise
-    white_noise_sig = np.fft.irfft(signal_noise/ifos[0].amplitude_spectral_density_array,(int(duration*sampling_frequency)))
+    white_noise_sig = np.roll(np.fft.irfft(signal_noise/ifos[0].amplitude_spectral_density_array,(int(duration*sampling_frequency))),int(-0.5*sampling_frequency))
+    white_noise_sig = np.roll(white_noise_sig,int((injection_parameters['geocent_time']-ref_geocent_time)*sampling_frequency))
 
     # combine noise and noise-free signal
     ht_noisy = ht + white_noise_sig 
-    #plt.plot(white_noise_sig+ht_shift, alpha=0.5)
-    #plt.plot(white_noise_sig, alpha=0.5)
+    #ht_noisy = (ifos[0].whitened_frequency_domain_strain).reshape(whiten_hp.shape[0]) * win
+    #ht_noisy = np.fft.irfft(ht_noisy)
+    #ht_noisy = shift(ht_noisy, int(injection_parameters['geocent_time']-ref_geocent_time), cval=0.0)
+    #plt.plot(ht_noisy, alpha=0.5)
+    #plt.plot(ht, alpha=0.5)
+    #plt.show()
     #plt.savefig('/home/hunter.gabbard/public_html/test.png')
     #plt.close()
-    #print('Done')
-    #exit()
 
 
     return ht,ht_noisy,injection_parameters,ifos,waveform_generator
 
-def gen_masses(m_min=5.0,M_max=100.0,mdist='astro'):
+def gen_masses(m_min=5.0,M_max=100.0,mdist='metric'):
     """ function returns a pair of masses drawn from the appropriate distribution
    
     Parameters
@@ -255,8 +260,23 @@ def gen_masses(m_min=5.0,M_max=100.0,mdist='astro'):
         eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
         mc = np.sum(m12)*eta**(3.0/5.0)
         return m12, mc, eta
+    elif mdist=='metric':
+        print('{}: using metric based mass distribution'.format(time.asctime()))
+        new_m_min = m_min
+        new_M_max = M_max
+        new_M_min = 2.0*new_m_min
+        eta_min = m_min*(new_M_max-new_m_min)/new_M_max**2
+        while not flag:
+            M = (new_M_min**(-7.0/3.0) - np.random.uniform(0,1,1)*(new_M_min**(-7.0/3.0) - new_M_max**(-7.0/3.0)))**(-3.0/7.0)
+            eta = (eta_min**(-2.0) - np.random.uniform(0,1,1)*(eta_min**(-2.0) - 16.0))**(-1.0/2.0)
+            m12 = np.zeros(2)
+            m12[0] = 0.5*M + M*np.sqrt(0.25-eta)
+            m12[1] = M - m12[0]
+            flag = True if (np.sum(m12)<new_M_max) and (np.all(m12>new_m_min)) and (m12[0]>=m12[1]) else False
+        mc = np.sum(m12)*eta**(3.0/5.0)
+        return m12, mc, eta
 
-def gen_par(fs,T_obs,geocent_time,mdist='astro'):
+def gen_par(fs,T_obs,geocent_time,mdist='metric'):
     """ Generates a random set of parameters
     
     Parameters
@@ -307,10 +327,11 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
     ra=1.375
     dec=-1.2108
     psi=2.659
-    theta_jn=0.4
+    theta_jn=0.0
     lum_dist=lum_dist
     mc=0
     eta=0
+    ref_geocent_time=1126259642.5 # reference gps time
 
     pars = {'m1':m1,'m2':m2,'geocent_time':geocent_time,'phase':phase,
             'N_gen':N_gen,'det':det,'ra':ra,'dec':dec,'psi':psi,'theta_jn':theta_jn,'lum_dist':lum_dist}
@@ -336,7 +357,7 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
             # choose waveform parameters here
             pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time'], pars['lum_dist']=gen_par(duration,sampling_frequency,geocent_time)
             train_samples.append(gen_template(duration,sampling_frequency,
-                                   pars)[0:2])
+                                   pars,ref_geocent_time)[0:2])
             train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
             print('Made waveform %d/%d' % (i,N_gen))
         train_samples_noisefree = np.array(train_samples)[:,0,:]
@@ -352,9 +373,14 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
             pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time'], pars['lum_dist']=gen_par(duration,sampling_frequency,geocent_time)
             # make parameters have equal mass
             pars['m1']=pars['m2']
+            eta = pars['m1']*pars['m1']/(pars['m1']+pars['m1'])**2
+            mc = np.sum([pars['m1'],pars['m1']])*eta**(3.0/5.0)
+            # make gps time to be same as ref time
+            pars['geocent_time']=ref_geocent_time
+            #pars['phase'] = 1.3
             # inject signal
             test_samp_noisefree,test_samp_noisy,injection_parameters,ifos,waveform_generator = gen_template(duration,sampling_frequency,
-                                   pars)
+                                   pars,ref_geocent_time)
 
             opt_snr = ifos[0].meta_data['optimal_SNR']
             print(ifos[0].meta_data['optimal_SNR'])
@@ -383,34 +409,63 @@ def run(sampling_frequency=1024.,duration=1.,m1=36.,m2=36.,
     priors['ra'] = 1.375
     priors['dec'] = -1.2108
     priors['psi'] = 2.659
-    priors['theta_jn'] = 0.4
-    priors['luminosity_distance'] =  bilby.gw.prior.UniformComovingVolume(name='luminosity_distance', minimum=1e2, maximum=4e2, unit='Mpc')
+    priors['theta_jn'] = 0.0
+    priors['luminosity_distance'] =  bilby.gw.prior.Uniform(name='luminosity_distance', minimum=1e2, maximum=4e2, unit='Mpc')
+    #priors['luminosity_distance'] =  bilby.gw.prior.UniformComovingVolume(name='luminosity_distance', minimum=1e2, maximum=4e2, unit='Mpc')
+
+    # try only doing pe on 3 pars
+    #priors['phase'] = 1.3
 
     # all pars not included from list above will have pe done on them
-    for key in ['a_1', 'a_2', 'tilt_1', 'tilt_2', 'phi_12', 'phi_jl', 'theta_jn', 'psi', 'ra',
-                'dec']:
-        priors[key] = injection_parameters[key]
+    #for key in ['a_1', 'a_2', 'tilt_1', 'tilt_2', 'phi_12', 'phi_jl', 'theta_jn', 'psi', 'ra',
+    #            'dec']:
+    #    priors[key] = injection_parameters[key]
 
     # Initialise the likelihood by passing in the interferometer data (ifos) and
     # the waveform generator
     likelihood = bilby.gw.GravitationalWaveTransient(
-        interferometers=ifos, waveform_generator=waveform_generator,
+        interferometers=ifos, waveform_generator=waveform_generator, phase_marginalization=True,
         priors=priors)
+
+    #likelihood = bilby.gw.GravitationalWaveTransient(
+    #interferometers=ifos, waveform_generator=waveform_generator, priors=priors,
+    #distance_marginalization=False, phase_marginalization=True, time_marginalization=False)
 
     # Run sampler.  In this case we're going to use the `dynesty` sampler
     #dynesty=bilby.core.sampler.dynesty.Dynesty(likelihood=likelihood,priors=priors,dlogz=30.)
-    result = bilby.run_sampler(
-        likelihood=likelihood, priors=priors, sampler='dynesty', npoints=500,
+    result = bilby.run_sampler(conversion_function=bilby.gw.conversion.generate_all_bbh_parameters,
+        likelihood=likelihood, priors=priors, sampler='dynesty', npoints=1000,
         injection_parameters=injection_parameters, outdir=outdir, label=label,
-        save='hdf5')
+        save='hdf5',dlogz=2000.)
+
+    #converted_results=bilby.gw.conversion.generate_phase_sample_from_marginalized_likelihood(sample=dict(result.posterior),likelihood=likelihood)
+    #converted_result = result.samples_to_posterior(likelihood=likelihood,priors=priors,
+    #                                               conversion_function=bilby.gw.conversion.generate_phase_sample_from_marginalized_likelihood)
+
+    #result = bilby.run_sampler(
+    #likelihood=likelihood, priors=priors, sampler='cpnest', npoints=2000,
+    #injection_parameters=injection_parameters, outdir=outdir,
+    #label=label, maxmcmc=2000,
+    #conversion_function=bilby.gw.conversion.generate_all_bbh_parameters)
+
 
     # Make a corner plot.
-    result.plot_corner()
+    result.plot_corner(parameters=['mass_1','mass_2','luminosity_distance','phase','geocent_time'])
 
     # save test sample waveform
     hf = h5py.File('%s/test_sample-%s.h5py' % (outdir,run_label), 'w')
     hf.create_dataset('noisy_waveform', data=test_samp_noisy)
     hf.create_dataset('noisefree_waveform', data=test_samp_noisefree)
+    hf.create_dataset('mass_1_post', data=np.array(result.posterior.mass_1))
+    hf.create_dataset('mass_2_post', data=np.array(result.posterior.mass_2))
+    hf.create_dataset('geocent_time_post', data=np.array(result.posterior.geocent_time))
+    hf.create_dataset('luminosity_distance_post', data=np.array(result.posterior.luminosity_distance))
+    hf.create_dataset('phase_post', data=np.array(result.posterior.phase))
+    hf.create_dataset('mass_1', data=result.injection_parameters['mass_1'])
+    hf.create_dataset('mass_2', data=result.injection_parameters['mass_2'])
+    hf.create_dataset('geocent_time', data=result.injection_parameters['geocent_time'])
+    hf.create_dataset('luminosity_distance', data=result.injection_parameters['luminosity_distance'])
+    hf.create_dataset('phase', data=result.injection_parameters['phase'])
     hf.close()
 
     print('finished running pe')
