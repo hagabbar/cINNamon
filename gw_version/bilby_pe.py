@@ -122,10 +122,10 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det,ifos,event_time):
         h-cross version of GW waveform
     """
     # compute antenna response and apply
-    Fp=ifos.antenna_response(ra,dec,float(event_time),psi,'plus')
-    Fc=ifos.antenna_response(ra,dec,float(event_time),psi,'cross')
+    #Fp=ifos.antenna_response(ra,dec,float(event_time),psi,'plus')
+    #Fc=ifos.antenna_response(ra,dec,float(event_time),psi,'cross')
     #Fp,Fc,_,_ = antenna.response(float(event_time), ra, dec, 0, psi, 'radians', det )
-    ht = hp*Fp + hc*Fc     # overwrite the timeseries vector to reuse it
+    ht = hp + hc     # overwrite the timeseries vector to reuse it
 
     return ht, hp, hc
 
@@ -149,9 +149,10 @@ def gen_template(duration,sampling_frequency,pars,ref_geocent_time):
         parameter_conversion=bilby.gw.conversion.convert_to_lal_binary_black_hole_parameters,
         waveform_arguments=waveform_arguments,
         start_time=ref_geocent_time-0.5)
-
+    
     # create waveform
     wfg = waveform_generator
+    # manually add time shifting in waveform generation
     wfg.parameters = injection_parameters
     freq_signal = wfg.frequency_domain_strain()
     time_signal = wfg.time_domain_strain()
@@ -167,13 +168,17 @@ def gen_template(duration,sampling_frequency,pars,ref_geocent_time):
         start_time=ref_geocent_time-0.5)# - 0.5)
 
     # inject signal
-    signal_noise = ifos[0].strain_data.frequency_domain_strain
     ifos.inject_signal(waveform_generator=waveform_generator,
                        parameters=injection_parameters)
-    
 
-    whiten_hp = freq_signal['plus']/ifos[0].amplitude_spectral_density_array
-    whiten_hc = freq_signal['cross']/ifos[0].amplitude_spectral_density_array
+    # get signal + noise
+    signal_noise = ifos[0].strain_data.frequency_domain_strain
+
+    # get time shifted noise-free signal
+    freq_signal = ifos[0].get_detector_response(freq_signal, injection_parameters) 
+
+    # whiten noise-free signal
+    whiten_ht = freq_signal/ifos[0].amplitude_spectral_density_array
 
     # make aggressive window to cut out signal in central region
     # window is non-flat for 1/8 of desired Tobs
@@ -187,34 +192,19 @@ def gen_template(duration,sampling_frequency,pars,ref_geocent_time):
     # apply aggressive window to cut out signal in central region
     # window is non-flat for 1/8 of desired Tobs
     # the window has dropped to 50% at the Tobs boundaries
-    whiten_hp=whiten_hp.reshape(whiten_hp.shape[0])
-    whiten_hp[:] *= win
+    whiten_ht=whiten_ht.reshape(whiten_ht.shape[0])
+    whiten_ht[:] *= win
 
-    whiten_hc=whiten_hc.reshape(whiten_hc.shape[0])
-    whiten_hc[:] *= win
+    ht = np.fft.irfft(whiten_ht)
 
-    hp = np.fft.irfft(whiten_hp,int(duration*sampling_frequency))
-    hc = np.fft.irfft(whiten_hc,int(duration*sampling_frequency))
-
-    # TODO: may need to include event time in here somehow
-    hp = shift(hp, int(-0.5*sampling_frequency), cval=0.0)
-    hc = shift(hc, int(-0.5*sampling_frequency), cval=0.0)
-    #hp = np.roll(hp,int(-0.5*sampling_frequency))
-    #hc = np.roll(hc,int(-0.5*sampling_frequency))
-
-    ht_shift, hp_shift, hc_shift = make_bbh(hp,hc,sampling_frequency,pars['ra'],pars['dec'],pars['psi'],pars['det'],ifos[0],injection_parameters['geocent_time'])
-    ht=shift(ht_shift, int((injection_parameters['geocent_time']-ref_geocent_time)*sampling_frequency), cval=0.0)
-
-    # how to get sig+noise time series and whitened sig+noise time series
-    # ifos[0].strain_data.time_domain_strain
-    # np.fft.irfft(ifos[0].whitened_frequency_domain_strain)
-
-    # whiten noise
-    white_noise_sig = np.roll(np.fft.irfft(signal_noise/ifos[0].amplitude_spectral_density_array,(int(duration*sampling_frequency))),int(-0.5*sampling_frequency))
-    white_noise_sig = np.roll(white_noise_sig,int((injection_parameters['geocent_time']-ref_geocent_time)*sampling_frequency))
+    # noisy signal
+    white_noise_sig = signal_noise/ifos[0].amplitude_spectral_density_array
+    white_noise_sig *= win
+    white_noise_sig = np.fft.irfft(white_noise_sig)
 
     # combine noise and noise-free signal
-    ht_noisy = ht + white_noise_sig 
+    ht_noisy = white_noise_sig 
+    #plt.plot(np.fft.irfft(ifos[0].whitened_frequency_domain_strain))
     #ht_noisy = (ifos[0].whitened_frequency_domain_strain).reshape(whiten_hp.shape[0]) * win
     #ht_noisy = np.fft.irfft(ht_noisy)
     #ht_noisy = shift(ht_noisy, int(injection_parameters['geocent_time']-ref_geocent_time), cval=0.0)
