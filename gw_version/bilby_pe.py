@@ -129,15 +129,21 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det,ifos,event_time):
 
     return ht, hp, hc
 
-def gen_template(duration,sampling_frequency,pars,ref_geocent_time):
+def gen_template(duration,sampling_frequency,pars,ref_geocent_time,wvf_est=False):
     # whiten signal
 
     # fix parameters here
-    injection_parameters = dict(
+    if not wvf_est:
+        injection_parameters = dict(
         mass_1=pars['m1'],mass_2=pars['m2'], a_1=0.0, a_2=0.0, tilt_1=0.0, tilt_2=0.0,
         phi_12=0.0, phi_jl=0.0, luminosity_distance=pars['lum_dist'], theta_jn=pars['theta_jn'], psi=pars['psi'],
         phase=pars['phase'], geocent_time=pars['geocent_time'], ra=pars['ra'], dec=pars['dec'])
 
+    if wvf_est:
+        injection_parameters = dict(
+        chirp_mass=pars['mc'], mass_ratio=1.0, a_1=0.0, a_2=0.0, tilt_1=0.0, tilt_2=0.0,
+        phi_12=0.0, phi_jl=0.0, luminosity_distance=pars['lum_dist'], theta_jn=pars['theta_jn'], psi=pars['psi'],
+        phase=pars['phase'], geocent_time=pars['geocent_time'], ra=pars['ra'], dec=pars['dec'])
     # Fixed arguments passed into the source model
     waveform_arguments = dict(waveform_approximant='IMRPhenomPv2',
                               reference_frequency=20., minimum_frequency=20.)
@@ -243,7 +249,7 @@ def gen_masses(m_min=5.0,M_max=100.0,mdist='metric'):
     if mdist=='equal_mass':
         print('{}: using uniform and equal mass distribution'.format(time.asctime()))
         m1 = np.random.uniform(low=5.0,high=50.0)
-        m12 = [m1,m1]
+        m12 = np.array([m1,m1])
         eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
         mc = np.sum(m12)*eta**(3.0/5.0)
         return m12, mc, eta
@@ -254,7 +260,7 @@ def gen_masses(m_min=5.0,M_max=100.0,mdist='metric'):
         while not flag:
             m1 = np.random.uniform(low=5.0,high=50.0)
             m2 = np.random.uniform(low=5.0,high=50.0)
-            m12 = [m1,m2] 
+            m12 = np.array([m1,m2]) 
             flag = True if (np.sum(m12)<new_M_max) and (np.all(m12>new_m_min)) and (m12[0]>=m12[1]) else False
         eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
         mc = np.sum(m12)*eta**(3.0/5.0)
@@ -370,10 +376,10 @@ def run(sampling_frequency=512.,duration=1.,m1=36.,m2=36.,mc=17.41,
         train_pars = []
         for i in range(N_gen):
             # choose waveform parameters here
-            pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time'], pars['lum_dist']=gen_par(duration,sampling_frequency,geocent_time,mdist='uniform')
+            pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time'], pars['lum_dist']=gen_par(duration,sampling_frequency,geocent_time,mdist='equal_mass')
             train_samples.append(gen_template(duration,sampling_frequency,
                                    pars,ref_geocent_time)[0:2])
-            train_pars.append([mc,pars['lum_dist'],pars['theta_jn'],pars['geocent_time']])
+            train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
             print('Made waveform %d/%d' % (i,N_gen))
         train_samples_noisefree = np.array(train_samples)[:,0,:]
         train_samples_noisy = np.array(train_samples)[:,1,:]
