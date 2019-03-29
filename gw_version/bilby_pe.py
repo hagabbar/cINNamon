@@ -248,7 +248,7 @@ def gen_masses(m_min=5.0,M_max=100.0,mdist='metric'):
 
     if mdist=='equal_mass':
         print('{}: using uniform and equal mass distribution'.format(time.asctime()))
-        m1 = np.random.uniform(low=5.0,high=50.0)
+        m1 = np.random.uniform(low=35.0,high=50.0)
         m12 = np.array([m1,m1])
         eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
         mc = np.sum(m12)*eta**(3.0/5.0)
@@ -258,8 +258,8 @@ def gen_masses(m_min=5.0,M_max=100.0,mdist='metric'):
         new_m_min = m_min
         new_M_max = M_max
         while not flag:
-            m1 = np.random.uniform(low=5.0,high=50.0)
-            m2 = np.random.uniform(low=5.0,high=50.0)
+            m1 = np.random.uniform(low=35.0,high=50.0)
+            m2 = np.random.uniform(low=35.0,high=50.0)
             m12 = np.array([m1,m2]) 
             flag = True if (np.sum(m12)<new_M_max) and (np.all(m12>new_m_min)) and (m12[0]>=m12[1]) else False
         eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
@@ -314,7 +314,7 @@ def gen_par(fs,T_obs,geocent_time,mdist='metric'):
         class containing parameters of waveform
     """
     # define distribution params
-    m_min = 5.0         # 5 rest frame component masses
+    m_min = 35.0         # 5 rest frame component masses
     M_max = 100.0       # 100 rest frame total mass
 
     m12, mc, eta = gen_masses(m_min,M_max,mdist=mdist)
@@ -329,10 +329,11 @@ def gen_par(fs,T_obs,geocent_time,mdist='metric'):
     #theta_jn = np.random.uniform(low=0.0, high=2.0*np.pi)
     #print('{}: selected bbh inc angle = {}'.format(time.asctime(),theta_jn))
 
-    geocent_time = np.random.uniform(low=geocent_time-0.5,high=geocent_time+0.5)
+    geocent_time = np.random.uniform(low=geocent_time-0.01,high=geocent_time+0.01)
     print('{}: selected bbh GPS time = {}'.format(time.asctime(),geocent_time))
 
     lum_dist = np.random.uniform(low=1e3, high=4e3)
+    lum_dist = int(2e3)
     print('{}: selected bbh luminosity distance = {}'.format(time.asctime(),lum_dist))
 
     return m12[0], m12[1], mc, eta, phase, geocent_time, lum_dist
@@ -413,8 +414,8 @@ def run(sampling_frequency=512.,duration=1.,m1=36.,m2=36.,mc=17.41,
     # sampler.  If we do nothing, then the default priors get used.
     priors = bilby.gw.prior.BBHPriorDict()
     priors['geocent_time'] = bilby.core.prior.Uniform(
-        minimum=injection_parameters['geocent_time'] - duration/2,
-        maximum=injection_parameters['geocent_time'] + duration/2,
+        minimum=injection_parameters['geocent_time'] - 0.01,#duration/2,
+        maximum=injection_parameters['geocent_time'] + 0.01,#duration/2,
         name='geocent_time', latex_label='$t_c$', unit='$s$')
     # fix the following parameter priors
     priors.pop('mass_1')
@@ -430,10 +431,10 @@ def run(sampling_frequency=512.,duration=1.,m1=36.,m2=36.,mc=17.41,
     priors['psi'] = 0.0
     priors['theta_jn'] = 0.0
     priors['mass_ratio'] = 1.0
-    priors['chirp_mass'] = bilby.gw.prior.Uniform(name='chirp_mass', minimum=4.352752816480621, maximum=43.527528164806206, latex_label='$mc$', unit='$M_{\\odot}$')
+    priors['chirp_mass'] = bilby.gw.prior.Uniform(name='chirp_mass', minimum=30.469269715364344, maximum=43.527528164806206, latex_label='$mc$', unit='$M_{\\odot}$')
     priors['phase'] = bilby.gw.prior.Uniform(name='phase', minimum=0.0, maximum=np.pi)
-    priors['luminosity_distance'] =  bilby.gw.prior.Uniform(name='luminosity_distance', minimum=1e3, maximum=4e3, unit='Mpc')
-    #priors['luminosity_distance'] =  bilby.gw.prior.UniformComovingVolume(name='luminosity_distance', minimum=1e2, maximum=4e2, unit='Mpc')
+    #priors['luminosity_distance'] =  bilby.gw.prior.Uniform(name='luminosity_distance', minimum=1e3, maximum=4e3, unit='Mpc')
+    priors['luminosity_distance'] = int(2e3)
 
     # try only doing pe on 3 pars
     #priors['phase'] = 1.3
