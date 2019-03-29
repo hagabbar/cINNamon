@@ -329,7 +329,7 @@ def gen_par(fs,T_obs,geocent_time,mdist='metric'):
     #theta_jn = np.random.uniform(low=0.0, high=2.0*np.pi)
     #print('{}: selected bbh inc angle = {}'.format(time.asctime(),theta_jn))
 
-    geocent_time = np.random.uniform(low=geocent_time-0.5,high=geocent_time+0.5)
+    geocent_time = np.random.uniform(low=geocent_time-0.01,high=geocent_time+0.01)
     print('{}: selected bbh GPS time = {}'.format(time.asctime(),geocent_time))
 
     lum_dist = np.random.uniform(low=1e3, high=4e3)
@@ -339,7 +339,7 @@ def gen_par(fs,T_obs,geocent_time,mdist='metric'):
 
 def run(sampling_frequency=512.,duration=1.,m1=36.,m2=36.,mc=17.41,
            geocent_time=1126259642.5,lum_dist=2000.,phase=0.0,N_gen=1000,make_test_samp=False,
-           make_train_samp=False,run_label='test_results'):
+           make_train_samp=False,run_label='test_results',make_noise=False,n_noise=25):
     # Set the duration and sampling frequency of the data segment that we're
     # going to inject the signal into
     duration = duration
@@ -377,10 +377,18 @@ def run(sampling_frequency=512.,duration=1.,m1=36.,m2=36.,mc=17.41,
         for i in range(N_gen):
             # choose waveform parameters here
             pars['m1'], pars['m2'], mc,eta, pars['phase'], pars['geocent_time'], pars['lum_dist']=gen_par(duration,sampling_frequency,geocent_time,mdist='equal_mass')
-            train_samples.append(gen_template(duration,sampling_frequency,
-                                   pars,ref_geocent_time)[0:2])
-            train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
-            print('Made waveform %d/%d' % (i,N_gen))
+            if not make_noise:
+                train_samples.append(gen_template(duration,sampling_frequency,
+                                     pars,ref_geocent_time)[0:2])
+                train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
+                print('Made waveform %d/%d' % (i,N_gen))
+            # generate extra noise realizations if requested
+            if make_noise:
+                for j in range(n_noise):
+                    train_samples.append(gen_template(duration,sampling_frequency,
+                                         pars,ref_geocent_time)[0:2])
+                    train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
+                    print('Made unique waveform %d/%d' % (i,N_gen))
         train_samples_noisefree = np.array(train_samples)[:,0,:]
         train_samples_noisy = np.array(train_samples)[:,1,:]
         return train_samples_noisy,train_samples_noisefree,np.array(train_pars)
