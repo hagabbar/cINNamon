@@ -7,9 +7,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 from sys import exit
 
-nsg = 2  # max number of sine-gaussian parameters
+nsg = 3  # max number of sine-gaussian parameters
 sg_default = 1.0  # default value of fixed sine-gaussian parameters
-parnames = ['mc','eta','t0','phi']    # parameter names
+parnames = ['mc','phi','t0']    # parameter names
 
 def sg(x,pars):
     """
@@ -175,32 +175,69 @@ def get_lik(ydata,ypars,out_dir,samp_idx,sigma=0.2,usepars=[0,1],Nsamp=1000):
 
     return samples_emcee[idx,:]
 
-def overlap(x,y):
+def overlap(x,y,cnt=0,nxt_cnt=False):
     """
     compute the overlap between samples from 2 differnt distributions
     """
+    priors = [30.47,43.53,0.0,np.pi,0.49,0.51]
+    priors_min=[priors[0],priors[2],priors[4]]
+    priors_max=[priors[1],priors[3],priors[5]]
 
-    if x.shape[1]==2:
-        X, Y = np.mgrid[0:1:20j, 0:1:20j]
+    if x.shape[1]==1:
+        if cnt==0:
+            priors = [30.47,43.53]
+        #elif cnt==1:
+        #    priors=[int(1e3),int(4e3)]
+        elif cnt==1:
+            priors=[0.0,np.pi]
+        elif cnt==2:
+            priors=[0.49,0.51]
+        X = np.mgrid[priors[0]:priors[1]:100j] 
+        positions = np.vstack([X.ravel()])
+    elif nxt_cnt != False:
+        X, Y = np.mgrid[priors_min[cnt]:priors_max[cnt]:100j, priors_min[nxt_cnt]:priors_max[nxt_cnt]:100j]
         positions = np.vstack([X.ravel(), Y.ravel()])
+        #print(positions)
+        #print(x[:,cnt],y[:,cnt])
+        #print(x[:,cnt+1],y[:,cnt+1])
+        #exit()
+        x = np.vstack((x[:,cnt],x[:,nxt_cnt])).T
+        y = np.vstack((y[:,cnt],y[:,nxt_cnt])).T
     elif x.shape[1]==3:
-        X, Y, Z = np.mgrid[0:1:20j, 0:1:20j, 0:1:20j]
+        X, Y, Z = np.mgrid[priors[0]:priors[1]:20j, priors[2]:priors[3]:20j, priors[4]:priors[5]:20j]
         positions = np.vstack([X.ravel(), Y.ravel(), Z.ravel()])
     elif x.shape[1]==4:
-        X, Y, Z, H = np.mgrid[0:1:20j, 0:1:20j, 0:1:20j, 0:1:20j]
+        X, Y, Z, H = np.mgrid[priors[0]:priors[1]:20j, priors[2]:priors[3]:20j, priors[4]:priors[5]:20j, priors[6]:priors[7]:20j]
         positions = np.vstack([X.ravel(), Y.ravel(), Z.ravel(), H.ravel()])
     elif x.shape[1]==5:
         X, Y, Z, H, J = np.mgrid[0:1:20j, 0:1:20j, 0:1:20j, 0:1:20j, 0:1:20j]
         positions = np.vstack([X.ravel(), Y.ravel(), Z.ravel(), H.ravel(), J.ravel()])
+
     kernel_x = gaussian_kde(x.T)
     Z_x = np.reshape(kernel_x(positions).T, X.shape)
     kernel_y = gaussian_kde(y.T)
     Z_y = np.reshape(kernel_y(positions).T, X.shape)
-    n_x = 1.0/np.sum(Z_x)
-    n_y = 1.0/np.sum(Z_y)
-    print('Computed overlap ...')
+    #n_x = 1.0/np.sum(Z_x)
+    #n_y = 1.0/np.sum(Z_y)
+    overlap_result = (np.sum(Z_x*Z_y) / np.sqrt( np.sum(Z_x**2) * np.sum(Z_y**2) ))
+    import math
+    if math.isnan(overlap_result):
+        overlap_result = 0.0
+        #print(np.sum(Z_x*Z_y), np.sqrt( np.sum(Z_x**2) * np.sum(Z_y**2) ))
+        #print(np.sum(Z_x*Z_y) / np.sqrt( np.sum(Z_x**2) * np.sum(Z_y**2) ))
+    #import math
+    #if nxt_cnt != False and math.isnan(overlap_result): print(Z_x,Z_y)
+    #if nxt_cnt != False: print('Overlap: %.2f' % overlap_result)
 
-    return (np.sum(Z_x*Z_y) / np.sqrt( np.sum(Z_x**2) * np.sum(Z_y**2) ))
+    if x.shape[1]==3: print('Overlap: %.2f' % overlap_result)
+    #if math.isnan(overlap_result) and nxt_cnt != False: 
+        #overlap_result = 0.0
+    #    print(x.T,y.T)
+    #    exit()
+    #    print('Overlap: %.2f' % overlap_result)
+        #print(x.T.dtype,y.T.dtype)
+        #exit()
+    return overlap_result
     #return (n_y/n_x)*np.sum(Z_x*Z_y)/np.sum(Z_x*Z_x)
 
 #def get_lik(ydata,n_grid=64,sig_model='sg',sigma=None,xvec=None,bound=[0,1,0,1,0,1]):

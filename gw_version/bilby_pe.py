@@ -381,14 +381,14 @@ def run(sampling_frequency=512.,duration=1.,m1=36.,m2=36.,mc=17.41,
             if not make_noise:
                 train_samples.append(gen_template(duration,sampling_frequency,
                                      pars,ref_geocent_time)[0:2])
-                train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
+                train_pars.append([mc,pars['phase'],pars['geocent_time']])
                 print('Made waveform %d/%d' % (i,N_gen))
             # generate extra noise realizations if requested
             if make_noise:
                 for j in range(n_noise):
                     train_samples.append(gen_template(duration,sampling_frequency,
                                          pars,ref_geocent_time)[0:2])
-                    train_pars.append([mc,pars['lum_dist'],pars['phase'],pars['geocent_time']])
+                    train_pars.append([mc,pars['phase'],pars['geocent_time']])
                     print('Made unique waveform %d/%d' % (i,N_gen))
         train_samples_noisefree = np.array(train_samples)[:,0,:]
         train_samples_noisy = np.array(train_samples)[:,1,:]
@@ -482,7 +482,7 @@ def run(sampling_frequency=512.,duration=1.,m1=36.,m2=36.,mc=17.41,
 
 
     # Make a corner plot.
-    result.plot_corner(parameters=['chirp_mass','luminosity_distance','phase','geocent_time'])
+    result.plot_corner(parameters=['chirp_mass','phase','geocent_time'])
 
     # save test sample waveform
     hf = h5py.File('%s/test_sample-%s.h5py' % (outdir,run_label), 'w')

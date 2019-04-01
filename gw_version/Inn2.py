@@ -131,7 +131,7 @@ class DataSchema1D:
                     if callable(entry):
                         reifiedSchema.append(entry(batchSize, s[1]))
                     else:
-                        if s[0] == 'mc' or s[0] == 'lum_dist' or s[0] == 'phi' or s[0] == 't0': 
+                        if s[0] == 'mc' or s[0] == 'phi' or s[0] == 't0': 
                             entry = entry.reshape(entry.shape[0],1)
                         reifiedSchema.append(entry)
         except KeyError as e:
@@ -157,10 +157,12 @@ class F_fully_connected_leaky(nn.Module):
         self.d2b = nn.Dropout(p=dropout)
 
         self.fc1 = nn.Linear(size_in, internal_size)
+
         self.fc2 = nn.Linear(internal_size, internal_size)
         self.fc2b = nn.Linear(internal_size, internal_size)
         self.fc2c = nn.Linear(internal_size, internal_size)
         self.fc2d  = nn.Linear(internal_size, internal_size)
+
         self.fc3 = nn.Linear(internal_size, size)
 
         self.nl1 = nn.LeakyReLU(negative_slope=leaky_slope)
@@ -311,9 +313,8 @@ class RadynversionTrainer:
             yClean = y.clone()
 
             xp = self.model.inSchema.fill({'mc': x[:, 0], 
-                                           'lum_dist': x[:, 1], 
-                                           'phi': x[:, 2],
-                                           't0': x[:, 3]},
+                                           'phi': x[:, 1],
+                                           't0': x[:, 2]},
                                           zero_pad_fn=pad_fn)
             yzp = self.model.outSchema.fill({'timeseries': y[:], 
                                              'LatentSpace': randn},
@@ -409,9 +410,8 @@ class RadynversionTrainer:
                 x, y = x.to(self.dev), y.to(self.dev)
 
                 inp = self.model.inSchema.fill({'mc': x[:, 0],
-                                                'eta': x[:, 1],
-                                                'phi': x[:, 2],
-                                                't0': x[:, 3]},
+                                                'phi': x[:, 1],
+                                                't0': x[:, 2]},
                                                zero_pad_fn=pad_fn)
                 inpBack = self.model.outSchema.fill({'timeseries': y[:],
                                                      'LatentSpace': randn},
@@ -443,9 +443,8 @@ class RadynversionTrainer:
             pad_fn = lambda *x: torch.zeros(*x, device=self.dev) # 10 * torch.ones(*x, device=self.dev)
             randn = lambda *x: torch.randn(*x, device=self.dev)
             xp = self.model.inSchema.fill({'mc': x1[:, 0],
-                                           'lum_dist': x1[:, 1],
-                                           'phi': x1[:, 2],
-                                           't0': x1[:, 3]},
+                                           'phi': x1[:, 1],
+                                           't0': x1[:, 2]},
                                           zero_pad_fn=pad_fn)
             yp = self.model.outSchema.fill({'timeseries': y1[:], 
                                            'LatentSpace': randn},
@@ -492,13 +491,19 @@ class RadynversionTrainer:
 
 
 class AtmosData:
-    def __init__(self, dataLocations, test_split, resampleWl=None):
+    def __init__(self, dataLocations, test_split, ref_gps_time, resampleWl=None, logscale=False, normscale=False):
         if type(dataLocations) is str:
             dataLocations = [dataLocations]
 
         #with open(dataLocations[0], 'rb') as p:
         #    data = pickle.load(p)
-        data={'pos': h5py.File(dataLocations[0], 'r')['pos'][:],
+        if logscale: 
+            data={'pos': np.log10(h5py.File(dataLocations[0], 'r')['pos'][:]),
+              'labels': h5py.File(dataLocations[0], 'r')['labels'][:],
+              'x': h5py.File(dataLocations[0], 'r')['x'][:],
+              'sig': h5py.File(dataLocations[0], 'r')['sig'][:]}
+        else: 
+            data={'pos': h5py.File(dataLocations[0], 'r')['pos'][:],
               'labels': h5py.File(dataLocations[0], 'r')['labels'][:],
               'x': h5py.File(dataLocations[0], 'r')['x'][:],
               'sig': h5py.File(dataLocations[0], 'r')['sig'][:]}
@@ -528,15 +533,37 @@ class AtmosData:
         self.labels_test = data['labels'][-test_split:]
         self.sig_test = data['sig'][-test_split:]
         self.x = data['x']
+
+        # convert gps time to be diff between ref_time and actual time.
+        #data['pos'][:,3] = ref_gps_time - data['pos'][:,3]
+
         data['pos']=data['pos'][:-test_split]
         data['labels']=data['labels'][:-test_split]
-        self.mc = torch.tensor(data['pos'][0]).float()#.log10_()
-        self.lum_dist = torch.tensor(data['pos'][1]).float()#.log10_()
-        self.phi = torch.tensor(data['pos'][2]).float()#.log10()
-        self.t0 = torch.tensor(data['pos'][3]).float()
+        self.mc = torch.tensor(data['pos'][:,0]).float()#.log10_()
+        #self.lum_dist = torch.tensor(data['pos'][:,1]).float()#.log10_()
+        self.phi = torch.tensor(data['pos'][:,1]).float()#.log10()
+        self.t0 = torch.tensor(data['pos'][:,2]).float()
         self.timeseries = torch.tensor(data['labels'][:]).float()#.log10()
         self.atmosIn=data['pos'][:]
         self.atmosOut=data['labels'][:]
+
+        if normscale:
+            self.mc = torch.tensor(data['pos'][:,0]).float()/np.max(data['pos'][:,0])#.log10_()
+            #self.lum_dist = torch.tensor(data['pos'][:,1]).float()/np.max(data['pos'][:,1])#.log10_()
+            self.phi = torch.tensor(data['pos'][:,1]).float()/np.max(data['pos'][:,1])#.log10()
+            self.t0 = torch.tensor(data['pos'][:,2]).float()/np.max(data['pos'][:,2])
+
+            normscales = [np.max(data['pos'][:,0]),np.max(data['pos'][:,1]),1.]#,np.max(data['pos'][:,3])]
+            data['pos'][:,0]=data['pos'][:,0]/normscales[0]
+            data['pos'][:,1]=data['pos'][:,1]/normscales[1]
+            data['pos'][:,2]=data['pos'][:,2]/normscales[2]
+            #data['pos'][:,3]=data['pos'][:,3]/normscales[3]
+
+            self.atmosIn=data['pos']#[:]
+            self.normscales=normscales
+        else:
+            normscales=[]
+            self.normscales=normscales
 
     def split_data_and_init_loaders(self, batchSize, splitSeed=41, padLines=False, linePadValue='Edge', zeroPadding=0, testingFraction=0.2):
         self.batchSize = batchSize

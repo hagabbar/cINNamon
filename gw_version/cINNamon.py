@@ -59,57 +59,62 @@ import bilby
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 #from IPython.core.display import display, HTML
 #display(HTML("<style>.container { width:95% !important; }</style>"))
+prior = [30.47,43.53,0.0,np.pi,0.49,0.51] 
+prior_min=[prior[0],prior[2],prior[4]]
+prior_max=[prior[1],prior[3],prior[5]]
 
 # global parameters
 sig_model = 'sg'   # the signal model to use
-usepars = [0,1,2,3]    # parameter indices to use
+usepars = [0,1,2]    # parameter indices to use
 run_label='gpu0'
 out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gw_results/multipar/%s/" % run_label
 do_posterior_plots=True
-ndata=512           # length of 1 data sample
+ndata=128           # length of 1 data sample
 ndim_x=len(usepars)           # number of parameters to PE on
 ndim_y = ndata     # length of 1 data sample
+ref_gps_time=1126259643.0 # reference gps time + 0.5s (t0 where test samples are injected+0.5s)
 
-ndim_z = 6     # size of latent space
+N_VIEWED=200     # number of INN waveform estimates to plot
+ndim_z = 3     # size of latent space
 
 Ngrid=20
-n_neurons = 0
+n_neurons = 100
 ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons # 384     
 r = 3              # the grid dimension for the output tests
 sigma = 1.0        # the noise std
 seed = 1           # seed for generating data
 test_split = r*r   # number of testing samples to use
 
-N_samp = 1000 # number of test samples to use after training
+N_samp = 500 # number of test samples to use after training
+n_noise = 25 # number of noise realizations to add per sample
 plot_cadence = 50 # make plots every N iterations
 numInvLayers=5
 dropout=0.0
 batchsize=1600
-filtsize = 3       # TODO
+filtsize = 6       # TODO
 clamp=2.0          # TODO
-tot_dataset_size=1000 # 2**20 TODO really should use 1e8 once cpu is fixed
+tot_dataset_size=int(1e4) # 2**20 TODO really should use 1e8 once cpu is fixed
 
-tot_epoch=50000
-lr=1.0e-3
+tot_epoch=11000
+lr=2e-3
 zerosNoiseScale=5e-2
 y_noise_scale = 5e-2
 
-wPred=4000.0        #4000.0
-wLatent= 900.0     #900.0
-wRev= 1000.0        #1000.0
+wPred=4000.0        #1500.
+wLatent= 900.0     #300.0
+wRev= 1000.0        #500.
 
-template_dir = 'gw_data/templates/'
-event_name = 'gw150914'
-tag = '_srate-1024hz_oversamp_python3'
-add_noise_real=False
-
-latentAlphas=None
-backwardAlphas=None # [1.4, 2, 5.5, 7]
+latentAlphas=None#[7.1]
+backwardAlphas=None#[7.1] #[1.4, 2, 5.5, 7]
 conv_nn = False    # Choose to use convolutional layers. TODO
 multi_par=True
 load_dataset=True
-do_contours=True
-run_bilby_pe=True
+add_noise_real=True # if true, generate extra noise realizations per sample
+do_contours=True    # apply contours to scatter plot
+do_logscale=False   # apply log10 tranform to pars
+do_normscale=True   # scale par values to be between 0 and 1
+do_waveform_est=False # make INN waveform estimation plots
+
 dataLocation1 = 'benchmark_data_%s.h5py' % run_label
 T = 1.0           # length of time series (s)
 dt = T/ndata        # sampling time (Sec)
@@ -243,18 +248,87 @@ def load_gw_data(seed=0):
 
     return signal_ts_noise, signal_pars, xvec, signal_ts_noisefree, names 
 
+def plot_wvf_est(fig_wvf,axes_wvf,generated_ml_images,generated_standard_images,signal_image,noise_signal,samp_freq,i,j,N_VIEWED=N_VIEWED,zoom=False):
+    """
+    Plot waveform estimates on noise-free waveform given INN parameter estimates
+
+    parameters
+    ----------
+    fig_wvf:
+        plotting figure
+    axes_wvf:
+        plotting axis
+    generated_images: 
+        waveform estimates produced from the INN.
+    signal_image:
+        noise-free version of waveform to be estimated
+    noise_signal:
+        noisy version of waveform to be estimated
+    samp_freq:
+        sampling frequency of waveforms
+    N_VIEWED:
+        number of estimated waveforms from INN to plot
+    zoom:
+        zoom in on +-50 elements around the middle of the signal.TODO: must fix this.
+    """
+
+    # plotable generated signals
+    generated_ml_images = np.random.permutation(generated_ml_images)
+    gen_ml_sig = np.reshape(generated_ml_images[:N_VIEWED], (generated_ml_images[:N_VIEWED].shape[0],generated_ml_images[:N_VIEWED].shape[1]))
+    generated_standard_images = np.random.permutation(generated_standard_images)
+    gen_standard_sig = np.reshape(generated_standard_images[:N_VIEWED], (generated_standard_images[:N_VIEWED].shape[0],generated_standard_images[:N_VIEWED].shape[1]))
+
+    # compute percentile curves
+    perc_90 = []
+    perc_75 = []
+    perc_25 = []
+    perc_5 = []
+    for n in range(gen_ml_sig.shape[1]):
+        perc_90.append(np.percentile(gen_ml_sig[:,n], 90))
+        perc_75.append(np.percentile(gen_ml_sig[:,n], 75))
+        perc_25.append(np.percentile(gen_ml_sig[:,n], 25))
+        perc_5.append(np.percentile(gen_ml_sig[:,n], 5))
+
+    # plot generated signals - first image is the noise-free true signal
+    axes_wvf[i,j].plot(signal_image, color='cyan', linewidth=0.05, alpha=0.5)
+    axes_wvf[i,j].fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#d5d8dc')
+    axes_wvf[i,j].fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')
+    if zoom==True: axes_wvf[i,j].set_xlim((int((samp_freq/2.)-50.),int((samp_freq/2.)+50)))
+
+    # compute percentile curves
+    perc_90 = []
+    perc_75 = []
+    perc_25 = []
+    perc_5 = []
+    for n in range(gen_standard_sig.shape[1]):
+        perc_90.append(np.percentile(gen_standard_sig[:,n], 90))
+        perc_75.append(np.percentile(gen_standard_sig[:,n], 75))
+        perc_25.append(np.percentile(gen_standard_sig[:,n], 25))
+        perc_5.append(np.percentile(gen_standard_sig[:,n], 5))
+
+    # plot generated signals - first image is the noise-free true signal
+    axes_wvf[i,j].fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#ffae33')
+    axes_wvf[i,j].fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#ff5733')
+
+    return axes_wvf[i,j]
+
 def main():
 
-    parnames=['mc','lum_dist','phi','t0']
+    parnames=['mc','phi','t0']
 
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
+    #tot_dataset_size = int(1e4)
 
     if not load_dataset:
-        signal_train_images, sig, signal_train_pars = bilby_pe.run(sampling_frequency=ndata,N_gen=tot_dataset_size,make_train_samp=True,make_test_samp=False)
+        signal_train_images, sig, signal_train_pars = bilby_pe.run(sampling_frequency=ndata,N_gen=tot_dataset_size,make_train_samp=True,make_test_samp=False,make_noise=add_noise_real,n_noise=n_noise)
 
         #signal_train_images = signal_train_images.reshape((signal_train_images.shape[0],signal_train_images.shape[2]))
         # declare gw variants of positions and labels
+
+        # scale t0 par to be between 0 and 1
+        signal_train_pars[:,2] = ref_gps_time - signal_train_pars[:,2]
+
         labels = torch.tensor(signal_train_images, dtype=torch.float)
         pos = torch.tensor(signal_train_pars, dtype=torch.float)
         sig = torch.tensor(sig, dtype=torch.float)
@@ -268,8 +342,9 @@ def main():
         hf.create_dataset('x', data=x)
         hf.create_dataset('sig', data=sig)
         hf.create_dataset('parnames', data=np.string_(parnames))
+        hf.close()
 
-    data = AtmosData([dataLocation1], test_split, resampleWl=None)
+    data = AtmosData([dataLocation1], test_split, ref_gps_time, resampleWl=None, logscale=do_logscale, normscale=do_normscale)
     data.split_data_and_init_loaders(batchsize)
 
     # seperate the test data for plotting
@@ -279,31 +354,33 @@ def main():
     sig_test = []
 
     ndim_x = len(usepars)
-    bilby_result_dir = 'gw_data/bilby_output/bilby_output'
+    bilby_result_dir = 'gw_data/bilby_output/bilby_output_3D'
     print('Loading bilby posterior samples')
     # precompute true posterior samples on the test data
     cnt = 0
+
     samples = np.zeros((r*r,N_samp,ndim_x))
     for i in range(r):
         for j in range(r):
             # TODO: remove this bandaged phase file calc
-            f = h5py.File('%s/samp_%d_result.hdf5' % (bilby_result_dir,cnt), 'r')
-            temp_post = h5py.File('%s/temp_post_%d.hdf5' % (bilby_result_dir,cnt), 'r')
-            phase = temp_post['phase_post'][:]
-            f=f['data']['samples'][:N_samp,:]
-            f_new = []
-            for samp in range(f.shape[0]):
-                eta = f[samp,0]*f[samp,1]/(f[samp,0]+f[samp,1])**2
-                mc = np.sum([f[samp,0],f[samp,1]])*eta**(3.0/5.0)
-                f_new.append([mc,f[samp,2],phase[samp],f[samp,3]])
-            samples[cnt,:,:]=np.array(f_new)
-
             f = h5py.File('%s/test_sample-samp_%d.h5py' % (bilby_result_dir,cnt), 'r')
-            m1 = np.array(temp_post['mass_1'])
-            m2 = np.array(temp_post['mass_2'])
-            eta = m1*m2/(m1+m2)**2
-            mc = np.sum([m1,m2])*eta**(3.0/5.0)
-            pos_test.append([mc,np.array(temp_post['luminosity_distance']),np.array(temp_post['phase']),np.array(temp_post['geocent_time'])])
+
+            # select samples from posterior randomly
+            shuffling = np.random.permutation(f['phase_post'][:].shape[0])
+            phase = f['phase_post'][:][shuffling]
+            mc = f['mc_post'][:][shuffling]
+            t0 = ref_gps_time - f['geocent_time_post'][:][shuffling]
+            #dist=f['luminosity_distance_post'][:][shuffling]
+            f_new=np.array([mc,phase,t0]).T
+            f_new=f_new[:N_samp,:]
+            samples[cnt,:,:]=f_new
+
+            # get true scalar parameters
+            mc = np.array(f['mc'])
+            if do_normscale:
+                pos_test.append([mc/data.normscales[0],
+                                 np.array(f['phase'])/data.normscales[1],ref_gps_time-np.array(f['geocent_time'])/data.normscales[2]])
+            else: pos_test.append([mc,np.array(f['phase']),ref_gps_time-np.array(f['geocent_time'])])
             labels_test.append([np.array(f['noisy_waveform'])])
             sig_test.append([np.array(f['noisefree_waveform'])])
             cnt += 1
@@ -311,6 +388,10 @@ def main():
     pos_test = np.array(pos_test)
     labels_test = np.array(labels_test).reshape(int(r*r),ndata)
     sig_test = np.array(sig_test).reshape(int(r*r),ndata)
+
+    # make parameters on parameter logscale
+    if do_logscale:
+        pos_test=np.log10(pos_test)
 
     # plot the test data examples
     plt.figure(figsize=(6,6))
@@ -327,7 +408,6 @@ def main():
     plt.savefig('%stest_distribution.png' % out_dir,dpi=360)
     plt.close()
 
-    exit()
     # initialize plot for showing testing results
     fig, axes = plt.subplots(r,r,figsize=(6,6),sharex='col',sharey='row')
 
@@ -343,9 +423,11 @@ def main():
                          # plot the samples and the true contours
                          axes[i,j].clear()
                          axes[i,j].scatter(samples[cnt,:,k], samples[cnt,:,nextk],c='b',s=0.5,alpha=0.5)
-                         axes[i,j].plot(pos_test[cnt,k],pos_test[cnt,nextk],'+c',markersize=8)
-                         axes[i,j].set_xlim([0,1])
-                         axes[i,j].set_ylim([0,1])
+                         if do_logscale: axes[i,j].plot(np.exp(pos_test[cnt,k]),np.exp(pos_test[cnt,nextk]),'+c',markersize=8)
+                         elif do_normscale: axes[i,j].plot(pos_test[cnt,k]*data.normscales[k],pos_test[cnt,nextk]*data.normscales[k],'+c',markersize=8)
+                         else: axes[i,j].plot(pos_test[cnt,k],pos_test[cnt,nextk],'+c',markersize=8)
+                         #axes[i,j].set_xlim([0,1])
+                         #axes[i,j].set_ylim([0,1])
                          axes[i,j].set_xlabel(parname1) if i==r-1 else axes[i,j].set_xlabel('')
                          axes[i,j].set_ylabel(parname2) if j==0 else axes[i,j].set_ylabel('')
                          
@@ -360,15 +442,19 @@ def main():
             f.write("%s: %s\n" % (i,str(pars[i])))
         f.close()
 
+    # if multiple noise realizations per training sample, redifine total number of samples variable
+    if add_noise_real: tot_dataset_size_save=tot_dataset_size*n_noise
+    else: tot_dataset_size_save=tot_dataset_size
+
     # store hyperparameters for posterity
     f=open("%s_run-pars.txt" % run_label,"w+")
     pars_to_store={"sigma":sigma,"ndata":ndata,"T":T,"seed":seed,"n_neurons":n_neurons,"bound":bound,"conv_nn":conv_nn,"filtsize":filtsize,"dropout":dropout,
                    "clamp":clamp,"ndim_z":ndim_z,"tot_epoch":tot_epoch,"lr":lr, "latentAlphas":latentAlphas, "backwardAlphas":backwardAlphas,
-                   "zerosNoiseScale":zerosNoiseScale,"wPred":wPred,"wLatent":wLatent,"wRev":wRev,"tot_dataset_size":tot_dataset_size,
+                   "zerosNoiseScale":zerosNoiseScale,"wPred":wPred,"wLatent":wLatent,"wRev":wRev,"tot_dataset_size":tot_dataset_size_save,
                    "numInvLayers":numInvLayers,"batchsize":batchsize}
     store_pars(f,pars_to_store)
 
-    inRepr = [('amp', 1), ('t0', 1), ('tau', 1), ('phi', 1), ('!!PAD',)]
+    inRepr = [('mc', 1), ('phi', 1), ('t0', 1), ('!!PAD',)]
     outRepr = [('LatentSpace', ndim_z), ('!!PAD',), ('timeseries', data.atmosOut.shape[1])]
     model = RadynversionNet(inRepr, outRepr, dropout=dropout, zeroPadding=0, minSize=ndim_tot, numInvLayers=numInvLayers)
 
@@ -396,6 +482,8 @@ def main():
     try:
         tStart = time()
         olvec = np.zeros((r,r,int(tot_epoch/plot_cadence)))
+        olvec_1d = np.zeros((r,r,int(tot_epoch/plot_cadence),ndim_x))
+        olvec_2d = np.zeros((r,r,int(tot_epoch/plot_cadence),6))
         s = 0
 
         for epoch in range(trainer.numEpochs):
@@ -406,8 +494,12 @@ def main():
         
             loss, indLosses = trainer.train(epoch)
 
+            # initialize wvf estimation plots for showing testing results
+            fig_wvf, axes_wvf = plt.subplots(r,r,figsize=(6,6),sharex='col',sharey='row')
+
             # loop over a few cases and plot results in a grid
             if np.remainder(epoch,plot_cadence)==0:
+                cnt_2d=0
                 for k in range(ndim_x):
                     parname1 = parnames[k]
                     for nextk in range(ndim_x):
@@ -420,6 +512,9 @@ def main():
 
                             # initialize 1D plots for showing testing results
                             fig_1d, axes_1d = plt.subplots(r,r,figsize=(6,6),sharex='col',sharey='row')
+
+                            # initialize 1D plots for showing testing results for last 1d hist
+                            fig_1d_last, axes_1d_last = plt.subplots(r,r,figsize=(6,6),sharex='col',sharey='row')
 
                             for i in range(r):
                                 for j in range(r):
@@ -435,12 +530,53 @@ def main():
 
                                     # use the network to predict parameters
                                     rev_x = model(y_samps, rev=True)
-                                    rev_x = rev_x.cpu().data.numpy()
+                                    if do_logscale: 
+                                        rev_x = np.exp(rev_x.cpu().data.numpy())
+                                    elif do_normscale:
+                                        rev_x = rev_x.cpu().data.numpy()
+                                        for m in range(ndim_x):
+                                            rev_x[:,m] = rev_x[:,m]*data.normscales[m]
+                                    else:
+                                        rev_x = rev_x.cpu().data.numpy()
 
                                     # compute the n-d overlap
                                     if k==0 and nextk==1:
                                         ol = data_maker.overlap(samples[cnt,:,:ndim_x],rev_x[:,:ndim_x])
-                                        olvec[i,j,s] = ol                                     
+                                        olvec[i,j,s] = ol
+                                        
+                                        if do_waveform_est:
+                                            skip_gen_wvf = False
+                                            # compute INN waveform estimate plots
+                                            from bilby_pe import gen_template
+                                            gen_wvfs=[]
+                                            pars = {'mc':0,'geocent_time':0,'phase':0,
+                                                    'N_gen':0,'det':'H1','ra':1.375,'dec':-1.2108,'psi':0.0,'theta_jn':0.0,'lum_dist':int(2e3)}
+                                            for sig in rev_x[:]:
+                                                pars['mc'] = sig[0]
+                                                #pars['lum_dist'] = sig[1]
+                                                pars['phase'] = sig[2]
+                                                pars['geocent_time'] = ref_gps_time -1 + sig[3]
+                                                if prior[0] < pars['mc'] < prior[1] and prior[2] < pars['phase'] < prior[3] and prior[4] < sig[2] < prior[5]:
+                                                    gen_wvfs.append(gen_template(T,ndata,
+                                                                         pars,(ref_gps_time-0.5),wvf_est=True)[0:2])
+                                            if np.array(gen_wvfs).shape[0] == 0: skip_gen_wvf=True
+                                            else: gen_ml_wvfs = np.array(gen_wvfs)[:,0,:]
+
+                                            # compute bilby waveform estimate plots
+                                            gen_wvfs=[]
+                                            pars = {'mc':0,'geocent_time':0,'phase':0,
+                                                    'N_gen':0,'det':'H1','ra':1.375,'dec':-1.2108,'psi':0.0,'theta_jn':0.0,'lum_dist':int(2e3)}
+                                            for sig in samples[cnt,:,:]:
+                                                pars['mc'] = sig[0]
+                                                #pars['lum_dist'] = sig[1]
+                                                pars['phase'] = sig[2]
+                                                pars['geocent_time'] = ref_gps_time -1 + sig[3]
+                                                if prior[0] < pars['mc'] < prior[1] and prior[2] < pars['phase'] < prior[3] and prior[4] < sig[2] < prior[5]:
+                                                    gen_wvfs.append(gen_template(T,ndata,
+                                                                         pars,(ref_gps_time-0.5),wvf_est=True)[0:2])
+                                            if np.array(gen_wvfs).shape[0] == 0: skip_gen_wvf=True
+                                            else: gen_standard_wvfs = np.array(gen_wvfs)[:,0,:]
+                                            if not skip_gen_wvf: _ = plot_wvf_est(fig_wvf,axes_wvf,gen_ml_wvfs,gen_standard_wvfs,sig_test[cnt],labels_test[cnt],ndata,i,j)
 
                                     def confidence_bd(samp_array):
                                         """
@@ -457,6 +593,10 @@ def main():
 
                                         return [cf_bd_sum_lidx, cf_bd_sum_ridx]
 
+                                    # get 2d overlap values
+                                    ol_2d = data_maker.overlap(samples[cnt,:,:],rev_x[:,:ndim_x],k,nextk)
+                                    olvec_2d[i,j,s,cnt_2d] = ol_2d
+
                                     # plot the 2D samples and the true contours
                                     true_cfbd_x = confidence_bd(samples[cnt,:,k])
                                     true_cfbd_y = confidence_bd(samples[cnt,:,nextk]) 
@@ -465,19 +605,13 @@ def main():
                                     axes[i,j].clear()
                                     axes[i,j].scatter(samples[cnt,:,k], samples[cnt,:,nextk],c='b',s=0.2,alpha=0.5)
                                     axes[i,j].scatter(rev_x[:,k], rev_x[:,nextk],c='r',s=0.2,alpha=0.5)
-                                    axes[i,j].plot(pos_test[cnt,k],pos_test[cnt,nextk],'+c',markersize=8)
-                                    #axes[i,j].axvline(x=true_cfbd_x[0], linewidth=0.5, color='b')
-                                    #axes[i,j].axvline(x=true_cfbd_x[1], linewidth=0.5, color='b')
-                                    #axes[i,j].axhline(y=true_cfbd_y[0], linewidth=0.5, color='b')
-                                    #axes[i,j].axhline(y=true_cfbd_y[1], linewidth=0.5, color='b')
-                                    #axes[i,j].axvline(x=pred_cfbd_x[0], linewidth=0.5, color='r')
-                                    #axes[i,j].axvline(x=pred_cfbd_x[1], linewidth=0.5, color='r')
-                                    #axes[i,j].axhline(y=pred_cfbd_y[0], linewidth=0.5, color='r')
-                                    #axes[i,j].axhline(y=pred_cfbd_y[1], linewidth=0.5, color='r')
-                                    axes[i,j].set_xlim([0,1])
-                                    axes[i,j].set_ylim([0,1])
-                                    oltxt = '%.2f' % olvec[i,j,s]
-                                    axes[i,j].text(0.90, 0.95, oltxt,
+                                    if do_normscale:
+                                        axes[i,j].plot(pos_test[cnt,k]*data.normscales[k],pos_test[cnt,nextk]*data.normscales[nextk],'+c',markersize=8)
+                                    else: axes[i,j].plot(pos_test[cnt,k],pos_test[cnt,nextk],'+c',markersize=8)
+                                    axes[i,j].set_xlim([prior_min[k],prior_max[k]])
+                                    axes[i,j].set_ylim([prior_min[nextk],prior_max[nextk]])
+                                    oltxt_2d = '%.2f' % olvec_2d[i,j,s,cnt_2d]
+                                    axes[i,j].text(0.90, 0.95, oltxt_2d,
                                         horizontalalignment='right',
                                         verticalalignment='top',
                                             transform=axes[i,j].transAxes)
@@ -487,20 +621,47 @@ def main():
                                     axes[i,j].set_ylabel(parname2) if j==0 else axes[i,j].set_ylabel('')
                                    
                                     # plot the 1D samples and the 5% confidence bounds
+                                    ol_hist = data_maker.overlap(samples[cnt,:,k].reshape(N_samp,1),rev_x[:,k].reshape(N_samp,1),k)
+                                    olvec_1d[i,j,s,k] = ol_hist
                                     axes_1d[i,j].clear()
-                                    axes_1d[i,j].hist(samples[cnt,:,k],color='b',bins=100,alpha=0.5)
-                                    axes_1d[i,j].hist(rev_x[:,k],color='r',bins=100,alpha=0.5)
+                                    axes_1d[i,j].hist(samples[cnt,:,k],color='b',bins=50,alpha=0.5,normed=True)
+                                    axes_1d[i,j].hist(rev_x[:,k],color='r',bins=50,alpha=0.5,normed=True)
+                                    axes_1d[i,j].set_xlim([prior_min[k],prior_max[k]])
                                     axes_1d[i,j].axvline(x=pos_test[cnt,k], linewidth=0.5, color='black')
                                     axes_1d[i,j].axvline(x=confidence_bd(samples[cnt,:,k])[0], linewidth=0.5, color='b')
                                     axes_1d[i,j].axvline(x=confidence_bd(samples[cnt,:,k])[1], linewidth=0.5, color='b')
                                     axes_1d[i,j].axvline(x=confidence_bd(rev_x[:,k])[0], linewidth=0.5, color='r')
                                     axes_1d[i,j].axvline(x=confidence_bd(rev_x[:,k])[1], linewidth=0.5, color='r')
-                                    axes_1d[i,j].set_xlim([0,1])
+                                    #axes_1d[i,j].set_xlim([0,1])
+                                    oltxt = '%.2f' % olvec_1d[i,j,s,k]
                                     axes_1d[i,j].text(0.90, 0.95, oltxt,
                                         horizontalalignment='right',
                                         verticalalignment='top',
                                             transform=axes_1d[i,j].transAxes)
+                                    matplotlib.rc('xtick', labelsize=8)
+                                    matplotlib.rc('ytick', labelsize=8)
                                     axes_1d[i,j].set_xlabel(parname1) if i==r-1 else axes_1d[i,j].set_xlabel('')
+
+                                    if k == (ndim_x-2):
+                                        # plot the 1D samples and the 5% confidence bounds
+                                        ol_hist = data_maker.overlap(samples[cnt,:,k+1].reshape(N_samp,1),rev_x[:,k+1].reshape(N_samp,1),k+1)
+                                        olvec_1d[i,j,s,k] = ol_hist
+                                        axes_1d_last[i,j].clear()
+                                        axes_1d_last[i,j].hist(samples[cnt,:,k+1],color='b',bins=50,alpha=0.5,normed=True)
+                                        axes_1d_last[i,j].hist(rev_x[:,k+1],color='r',bins=50,alpha=0.5,normed=True)
+                                        axes_1d_last[i,j].set_xlim([prior_min[k+1],prior_max[k+1]])
+                                        axes_1d_last[i,j].axvline(x=pos_test[cnt,k+1], linewidth=0.5, color='black')
+                                        axes_1d_last[i,j].axvline(x=confidence_bd(samples[cnt,:,k+1])[0], linewidth=0.5, color='b')
+                                        axes_1d_last[i,j].axvline(x=confidence_bd(samples[cnt,:,k+1])[1], linewidth=0.5, color='b')
+                                        axes_1d_last[i,j].axvline(x=confidence_bd(rev_x[:,k+1])[0], linewidth=0.5, color='r')
+                                        axes_1d_last[i,j].axvline(x=confidence_bd(rev_x[:,k+1])[1], linewidth=0.5, color='r')
+                                        #axes_1d[i,j].set_xlim([0,1])
+                                        oltxt = '%.2f' % olvec_1d[i,j,s,k+1]
+                                        axes_1d_last[i,j].text(0.90, 0.95, oltxt,
+                                            horizontalalignment='right',
+                                            verticalalignment='top',
+                                                transform=axes_1d_last[i,j].transAxes)
+                                        axes_1d_last[i,j].set_xlabel(parnames[k+1]) if i==r-1 else axes_1d_last[i,j].set_xlabel('')
 
                                     cnt += 1
                             # save the results to file
@@ -509,10 +670,17 @@ def main():
                             fig_1d.savefig('%slatest-1d_%d.png' % (out_dir,k),dpi=360)
                             #fig_1d.close()
 
+                            if k == (ndim_x-2):
+                                # save the results to file
+                                fig_1d_last.canvas.draw()
+                                fig_1d_last.savefig('%sposteriors-1d_%d_%04d.png' % (out_dir,k+1,epoch),dpi=360)
+                                fig_1d_last.savefig('%slatest-1d_%d.png' % (out_dir,k+1),dpi=360)
+
                             fig.canvas.draw()
                             fig.savefig('%sposteriors-2d_%d%d_%04d.png' % (out_dir,k,nextk,epoch),dpi=360)
                             fig.savefig('%slatest-2d_%d%d.png' % (out_dir,k,nextk),dpi=360)
                             #fig.close()
+                            cnt_2d+=1
                 s += 1
 
             # plot overlap results
@@ -527,7 +695,10 @@ def main():
                 axes_log.set_xlabel('epoch (log)')
                 axes_log.set_ylim([0,1])
                 plt.savefig('%soverlap_logscale.png' % out_dir, dpi=360)
-                plt.close()      
+                plt.close()  
+
+                # save wvf estimate results
+                fig_wvf.savefig('%swvf_estimates_latest.pdf' % out_dir)    
 
                 fig = plt.figure(figsize=(6,6))
                 axes = fig.add_subplot(1,1,1)
