@@ -49,15 +49,18 @@ def mmd_multiscale_on(dev, alphas=None):
         alphas = [0.2, 0.5, 0.9, 1.3, 2.4, 5.0, 10.0, 20.0, 40.0]
     
     def mmd_multiscale(x, y):
+        # do matrix multiplication between two distributions
         xx, yy, zz = torch.mm(x,x.t()), torch.mm(y,y.t()), torch.mm(x,y.t())
 
         rx = (xx.diag().unsqueeze(0).expand_as(xx))
         ry = (yy.diag().unsqueeze(0).expand_as(yy))
 
+        # get spacing?
         dxx = rx.t() + rx - 2.*xx
         dyy = ry.t() + ry - 2.*yy
         dxy = rx.t() + ry - 2.*zz
 
+        # create empty arrays to store MMD results
         XX, YY, XY = (torch.zeros(xx.shape).to(dev),
 
                       torch.zeros(xx.shape).to(dev),
@@ -65,10 +68,13 @@ def mmd_multiscale_on(dev, alphas=None):
 
 #         for a in [0.2, 0.5, 0.9, 1.3, 2.4, 5.0, 10.0, 20.0, 40.0]:
 #         for a in [0.05, 0.125, 0.225, 0.325]:
+
+        # compute MMD for each alpha
         for a in alphas:
             XX += a**2 * (a**2 + dxx)**-1
             YY += a**2 * (a**2 + dyy)**-1
             XY += a**2 * (a**2 + dxy)**-1
 
+        # return the mean result
         return torch.mean(XX + YY - 2.*XY)
     return mmd_multiscale

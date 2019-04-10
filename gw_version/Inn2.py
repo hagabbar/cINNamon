@@ -14,6 +14,7 @@ from copy import deepcopy
 from itertools import accumulate
 import pickle
 
+import os
 from sys import exit
 
 PadOp = '!!PAD'
@@ -27,11 +28,13 @@ def schema_min_len(schema, zeroPadding):
 class DataSchema1D:
     def __init__(self, inp, minLength, zeroPadding, zero_pad_fn=torch.zeros):
         self.zero_pad = zero_pad_fn
+
         # Check schema is valid
         padCount = sum(1 if i[0] == PadOp else 0 for i in inp)
         for i in range(len(inp)-1):
             if inp[i][0] == PadOp and inp[i+1][0] == PadOp:
                 raise ValueError('Schema cannot contain two consecutive \'!!PAD\' instructions.')
+
         # if padCount > 1:
         #     raise ValueError('Schema can only contain one \'!!PAD\' instruction.')
         if len([i for i in inp if i[0] != PadOp]) > len(set([i[0] for i in inp if i[0] != PadOp])):
@@ -77,6 +80,7 @@ class DataSchema1D:
             else:
                 fusedSchema.append(schema[i])
             i += 1
+
         # Also remove 0-width ZeroPadding
         fusedSchema = [s for s in fusedSchema if s != (ZeroPadOp, 0)]
         self.schema = fusedSchema
@@ -161,18 +165,18 @@ class F_fully_connected_leaky(nn.Module):
         self.fc2 = nn.Linear(internal_size, internal_size)
         self.fc2b = nn.Linear(internal_size, internal_size)
         self.fc2c = nn.Linear(internal_size, internal_size)
-        self.fc2d  = nn.Linear(internal_size, internal_size)
+        #self.fc2d  = nn.Linear(internal_size, internal_size)
 
         self.fc3 = nn.Linear(internal_size, size)
 
         self.nl1 = nn.LeakyReLU(negative_slope=leaky_slope)
         self.nl2 = nn.LeakyReLU(negative_slope=leaky_slope)
         self.nl2b = nn.LeakyReLU(negative_slope=leaky_slope)
-        # self.nl1 = nn.ReLU()
-        # self.nl2 = nn.ReLU()
-        # self.nl2b = nn.ReLU()
+        #self.nl1 = nn.ReLU()
+        #self.nl2 = nn.ReLU()
+        #self.nl2b = nn.ReLU()
         self.nl2c = nn.LeakyReLU(negative_slope=leaky_slope)
-        self.nl2d = nn.ReLU()
+        #self.nl2d = nn.ReLU()
 
         if batch_norm:
             self.bn1 = nn.BatchNorm1d(internal_size)
@@ -183,6 +187,7 @@ class F_fully_connected_leaky(nn.Module):
             self.bn2b.weight.data.fill_(1)
         self.batch_norm = batch_norm
 
+    # define forward process layers?
     def forward(self, x):
         out = self.fc1(x)
         if self.batch_norm:
@@ -202,14 +207,14 @@ class F_fully_connected_leaky(nn.Module):
         out = self.fc2c(out)
         out = self.nl2c(out)
 
-        out = self.fc2d(out)
-        out = self.nl2d(out)
+        #out = self.fc2d(out)
+        #out = self.nl2d(out)
 
         out = self.fc3(out)
         return out
 
 class RadynversionNet(ReversibleGraphNet):
-    def __init__(self, inputs, outputs, zeroPadding=0, numInvLayers=5, dropout=0.00, minSize=None):
+    def __init__(self, inputs, outputs, zeroPadding=0, numInvLayers=5, dropout=0.00, minSize=None, clamp=2.0):
         # Determine dimensions and construct DataSchema
         inMinLength = schema_min_len(inputs, zeroPadding)
         outMinLength = schema_min_len(outputs, zeroPadding)
@@ -218,6 +223,8 @@ class RadynversionNet(ReversibleGraphNet):
             minLength = max(minLength, minSize)
         self.inSchema = DataSchema1D(inputs, minLength, zeroPadding)
         self.outSchema = DataSchema1D(outputs, minLength, zeroPadding)
+
+        # check is both input and output shape of network is same
         if len(self.inSchema) != len(self.outSchema):
             raise ValueError('Input and output schemas do not have the same dimension.')
 
@@ -225,10 +232,11 @@ class RadynversionNet(ReversibleGraphNet):
         inp = InputNode(len(self.inSchema), name='Input (0-pad extra channels)')
         nodes = [inp]
 
+        # add requested number of nodes to INN
         for i in range(numInvLayers):
             nodes.append(Node([nodes[-1].out0], rev_multiplicative_layer,
-                         {'F_class': F_fully_connected_leaky, 'clamp': 2.0,
-                          'F_args': {'dropout': 0.0}}, name='Inv%d' % i))
+                         {'F_class': F_fully_connected_leaky, 'clamp': clamp,
+                          'F_args': {'dropout': dropout}}, name='Inv%d' % i))
             if (i != numInvLayers - 1):
                 nodes.append(Node([nodes[-1].out0], permute_layer, {'seed': i}, name='Permute%d' % i))
 
@@ -248,12 +256,12 @@ class RadynversionTrainer:
             for block in mod_list.children():
                 for coeff in block.children():
                     coeff.fc3.weight.data = 1e-3*torch.randn(coeff.fc3.weight.shape)
-#                     coeff.fc3.weight.data = 1e-2*torch.randn(coeff.fc3.weight.shape)
+#                    coeff.fc3.weight.data = 1e-2*torch.randn(coeff.fc3.weight.shape)
 
         self.model.to(dev)
 
     def training_params(self, numEpochs, lr=2e-3, miniBatchesPerEpoch=20, metaEpoch=12, miniBatchSize=None, 
-                        l2Reg=2e-5, wPred=1500, wLatent=300, wRev=500, zerosNoiseScale=5e-3, fadeIn=True,
+                        l2Reg=2e-5, wMSEf=1500, wMSEr=1500, wLatent=300, wRev=500, zerosNoiseScale=5e-3, fadeIn=True,
                         loss_fit=mse, loss_latent=None, loss_backward=None):
         if miniBatchSize is None:
             miniBatchSize = self.atmosData.batchSize
@@ -274,7 +282,8 @@ class RadynversionTrainer:
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optim,
                                                          step_size=metaEpoch,
                                                          gamma=gamma)
-        self.wPred = wPred
+        self.wMSEf = wMSEf
+        self.wMSEr = wMSEr
         self.fadeIn = fadeIn
         self.wLatent = wLatent
         self.wRev = wRev
@@ -291,15 +300,20 @@ class RadynversionTrainer:
 
         lTot = 0
         miniBatchIdx = 0
+
+        # define scale of padding
         if self.fadeIn:
             wRevScale = min(epoch / (0.4 * self.numEpochs), 1)**3
+            print(wRevScale)
         else:
             wRevScale = 1.0
+        # dfine scale of padding
         noiseScale = (1.0 - wRevScale) * self.zerosNoiseScale
         # noiseScale = self.zerosNoiseScale
 
         pad_fn = lambda *x: noiseScale * torch.randn(*x, device=self.dev) #+ 10 * torch.ones(*x, device=self.dev)
 #         zeros = lambda *x: torch.zeros(*x, device=self.dev)
+        # get a random gaussian
         randn = lambda *x: torch.randn(*x, device=self.dev)
         losses = [0, 0, 0, 0]
 
@@ -309,53 +323,86 @@ class RadynversionTrainer:
             if miniBatchIdx > self.miniBatchesPerEpoch:
                 break
 
+            # define pars and time series vectors
             x, y = x.to(self.dev), y.to(self.dev)
             yClean = y.clone()
 
+            # fill parameter vector
             xp = self.model.inSchema.fill({'mc': x[:, 0], 
                                            'phi': x[:, 1],
                                            't0': x[:, 2]},
                                           zero_pad_fn=pad_fn)
+            # fill time series and latent space vector
             yzp = self.model.outSchema.fill({'timeseries': y[:], 
                                              'LatentSpace': randn},
                                             zero_pad_fn=pad_fn)
 
             self.optim.zero_grad()
 
+            # compute time series prediction given parameters
             out = self.model(xp)
 
-            # lForward = self.wPred * (self.loss_fit(y[:, 0], out[:, self.model.outSchema.Halpha]) + 
-            #                          self.loss_fit(y[:, 1], out[:, self.model.outSchema.Ca8542]))
-#             lForward = self.wPred * self.loss_fit(yzp[:, :self.model.outSchema.LatentSpace[0]], out[:, :self.model.outSchema.LatentSpace[0]])
-
-            lForward = self.wPred * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[-1]+1:], 
+            # compute L2 mean-squared forward loss. Input is time series and latent space variables.
+            # output is time series / latent space prediction of model.
+ 
+            # if uncommented, include z as well.
+            #lForward = self.wMSEf * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[0]:],#[-1]+1:], 
+            #                                      out[:, self.model.outSchema.LatentSpace[0]:])#[-1]+1:])
+            # if uncommented, don't include z in MSE forward loss
+            lForward = self.wMSEf * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[-1]+1:], 
                                                   out[:, self.model.outSchema.LatentSpace[-1]+1:])
-            losses[0] += lForward.data.item() / self.wPred
+            # store forward loss after having normalized by the predefined forward weighting
+            losses[0] += lForward.data.item() / self.wMSEf
 
-            
+            # concatenate time series prediction and latent space prediction
             outLatentGradOnly = torch.cat((out[:, self.model.outSchema.timeseries].data, 
                                            out[:, self.model.outSchema.LatentSpace]), 
                                           dim=1)
+            # concatenate true time series and latent space.
             unpaddedTarget = torch.cat((yzp[:, self.model.outSchema.timeseries], 
                                         yzp[:, self.model.outSchema.LatentSpace]), 
                                        dim=1)
+
+            #outLatentGradOnly_y = out[:, self.model.outSchema.timeseries].data
+            #unpaddedTarget_y = yzp[:, self.model.outSchema.timeseries]
+
+            #outLatentGradOnly_z = out[:, self.model.outSchema.LatentSpace]
+            #unpaddedTarget_z = yzp[:, self.model.outSchema.LatentSpace]
             
+            # calculate MMD forward loss 
             lForward2 = self.wLatent * self.loss_latent(outLatentGradOnly, unpaddedTarget)
+            #lForward2_y = self.wLatent * self.loss_latent(outLatentGradOnly_y, unpaddedTarget_y)
+            #lForward2_z = self.wLatent * self.loss_latent(outLatentGradOnly_z, unpaddedTarget_z)
+
+            # store loss after having normalized by latent weighting
             losses[1] += lForward2.data.item() / self.wLatent
+            # add MMD loss to L2 loss to get total forward loss
             lForward += lForward2
+
+            # store loss after having normalized by latent weighting
+            #losses[1] += (lForward2_y / self.wLatent) + (lForward2_z / self.wLatent)
+            # add MMD loss to L2 loss to get total forward loss
+            #lForward += lForward2_y + lForward2_z
             
+            
+            # add total forward loss total loss
             lTot += lForward.data.item()
 
+            # TODO: what is goig on here?
             lForward.backward()
 
+            # get predicted latent space and true time series
             yzpRev = self.model.outSchema.fill({'timeseries': yClean[:], 
                                                 'LatentSpace': out[:, self.model.outSchema.LatentSpace].data},
                                                zero_pad_fn=pad_fn)
+            # get random gaussian latent space and true time series
             yzpRevRand = self.model.outSchema.fill({'timeseries': yClean[:], 
                                                     'LatentSpace': randn},
                                                    zero_pad_fn=pad_fn)
 
+            # get predicted pars given predicted laten space and true time series
             outRev = self.model(yzpRev, rev=True)
+            # get predicted pars given rand gaussian latent and true time series
             outRevRand = self.model(yzpRevRand, rev=True)
 
             # THis guy should have been OUTREVRAND!!!
@@ -364,27 +411,39 @@ class RadynversionTrainer:
             #                    outRevRand[:, self.model.inSchema.vel]),
             #                   dim=1)
             # lBackward = self.wRev * wRevScale * self.loss_backward(xBack, x.reshape(self.miniBatchSize, -1))
+
+            # calculate reverse loss using random latent variables / true time series predicted pars
+            # compare to true parameters
             lBackward = self.wRev * wRevScale * self.loss_backward(outRevRand[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1], 
                                                                    xp[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1])
 
             scale = wRevScale if wRevScale != 0 else 1.0
+            # store backward loss and normalize by reverse weighting
             losses[2] += lBackward.data.item() / (self.wRev * scale)
-            #TODO: may need to uncomment this
+
             #lBackward2 += 0.5 * self.wPred * self.loss_fit(outRev, xp)
-            lBackward2 = 0.5 * self.wPred * self.loss_fit(outRev[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1], 
+            # calculate backward MMD loss using predicted pars given latent space and true time series.
+            # compare to true parameters. Why is 0.5 hard coded here?
+            lBackward2 = self.wMSEr * self.loss_fit(outRev[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1], 
                                                                xp[:, self.model.inSchema.mc[0]:self.model.inSchema.t0[-1]+1])
-            losses[3] += lBackward2.data.item() / self.wPred * 2
+
+            # store backward loss normalized by predicted weight (also a factor of two in here for some reason?)
+            losses[3] += lBackward2.data.item() / self.wMSEr
             lBackward += lBackward2
             
+            # add backward loss to total loss value
             lTot += lBackward.data.item()
 
+            # TODO: What is this?
             lBackward.backward()
 
+            # make gradient be between -15.0 and 15.0
             for p in self.model.parameters():
                 p.grad.data.clamp_(-15.0, 15.0)
 
             self.optim.step()
 
+        # append losses
         losses = [l / miniBatchIdx for l in losses]
         return lTot / miniBatchIdx, losses
 
@@ -456,7 +515,9 @@ class RadynversionTrainer:
             # Backward MMD
             xBack = self.model(yp, rev=True)
 
-            r = np.logspace(np.log10(0.5), np.log10(500), num=2000)
+            # define total range of alphas to sweep over during training. Alpha determines kernel size used in MMD loss calculation.
+            # by default min is 0.5 and max is 500
+            r = np.logspace(np.log10(0.5), np.log10(10), num=2000)
             mmdValsFor = []
             mmdValsBack = []
             if self.mmFns is None:
@@ -495,36 +556,31 @@ class AtmosData:
         if type(dataLocations) is str:
             dataLocations = [dataLocations]
 
-        #with open(dataLocations[0], 'rb') as p:
-        #    data = pickle.load(p)
-        if logscale: 
-            data={'pos': np.log10(h5py.File(dataLocations[0], 'r')['pos'][:]),
-              'labels': h5py.File(dataLocations[0], 'r')['labels'][:],
-              'x': h5py.File(dataLocations[0], 'r')['x'][:],
-              'sig': h5py.File(dataLocations[0], 'r')['sig'][:]}
-        else: 
-            data={'pos': h5py.File(dataLocations[0], 'r')['pos'][:],
-              'labels': h5py.File(dataLocations[0], 'r')['labels'][:],
-              'x': h5py.File(dataLocations[0], 'r')['x'][:],
-              'sig': h5py.File(dataLocations[0], 'r')['sig'][:]}
+        data={'pos': [], 'labels': [], 'x': [], 'sig': []}
+        for filename in os.listdir(dataLocations[0]):
+            if logscale: 
+                data_temp={'pos': np.log10(h5py.File(dataLocations[0]+filename, 'r')['pos'][:]),
+                  'labels': h5py.File(dataLocations[0]+filename, 'r')['labels'][:],
+                  'x': h5py.File(dataLocations[0]+filename, 'r')['x'][:],
+                  'sig': h5py.File(dataLocations[0]+filename, 'r')['sig'][:]}
+            else: 
+                data_temp={'pos': h5py.File(dataLocations[0]+filename, 'r')['pos'][:],
+                  'labels': h5py.File(dataLocations[0]+filename, 'r')['labels'][:],
+                  'x': h5py.File(dataLocations[0]+filename, 'r')['x'][:],
+                  'sig': h5py.File(dataLocations[0]+filename, 'r')['sig'][:]}
 
-        if len(dataLocations) > 1:
-            for dataLocation in dataLocations[1:]:
-                with open(dataLocation, 'rb') as p:
-                    d = pickle.load(p)
+            data['pos'].append(data_temp['pos'])
+            data['labels'].append(data_temp['labels'])
+            data['x'].append(data_temp['x'])
+            data['sig'].append(data_temp['sig'])
 
-                for k in data.keys():
-                    if k == 'wavelength' or k == 'z' or k == 'lineInfo':
-                        continue
-                    if k == 'line':
-                        for i in range(len(data['line'])):
-                            data[k][i] += d[k][i]
-                    else:
-                        try:
-                            data[k] += d[k]
-                        except KeyError:
-                            pass
+        data['pos'] = np.concatenate(np.array(data['pos']), axis=0)
+        data['labels'] = np.concatenate(np.array(data['labels']), axis=0)
+        data['x'] = np.concatenate(np.array(data['x']), axis=0)
+        data['sig'] = np.concatenate(np.array(data['sig']), axis=0)
 
+        print(data['pos'].shape)
+        exit()
         #TODO: may need to not log the training data
         self.pos = data['pos'][:]
         self.labels = data['labels'][:]
@@ -553,7 +609,7 @@ class AtmosData:
             self.phi = torch.tensor(data['pos'][:,1]).float()/np.max(data['pos'][:,1])#.log10()
             self.t0 = torch.tensor(data['pos'][:,2]).float()/np.max(data['pos'][:,2])
 
-            normscales = [np.max(data['pos'][:,0]),np.max(data['pos'][:,1]),1.]#,np.max(data['pos'][:,3])]
+            normscales = [np.max(data['pos'][:,0]),np.max(data['pos'][:,1]),np.max(data['pos'][:,2])]#,np.max(data['pos'][:,3])]
             data['pos'][:,0]=data['pos'][:,0]/normscales[0]
             data['pos'][:,1]=data['pos'][:,1]/normscales[1]
             data['pos'][:,2]=data['pos'][:,2]/normscales[2]

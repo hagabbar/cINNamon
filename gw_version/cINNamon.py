@@ -46,6 +46,7 @@ import torch.utils.data
 import h5py
 import os
 from sys import exit
+import corner
 
 from time import time
 
@@ -74,11 +75,11 @@ ndim_x=len(usepars)           # number of parameters to PE on
 ndim_y = ndata     # length of 1 data sample
 ref_gps_time=1126259643.0 # reference gps time + 0.5s (t0 where test samples are injected+0.5s)
 
-N_VIEWED=200     # number of INN waveform estimates to plot
-ndim_z = 3     # size of latent space
+N_VIEWED=128     # number of INN waveform estimates to plot
+ndim_z = 3       # size of latent space
 
 Ngrid=20
-n_neurons = 100
+n_neurons = 131#200
 ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons # 384     
 r = 3              # the grid dimension for the output tests
 sigma = 1.0        # the noise std
@@ -86,26 +87,29 @@ seed = 1           # seed for generating data
 test_split = r*r   # number of testing samples to use
 
 N_samp = 500 # number of test samples to use after training
-n_noise = 25 # number of noise realizations to add per sample
-plot_cadence = 50 # make plots every N iterations
-numInvLayers=5
+n_noise = 5 # number of noise realizations to add per sample
+plot_cadence = 100 # make plots every N iterations
+numInvLayers=8
 dropout=0.0
-batchsize=1600
+batchsize=800
 filtsize = 6       # TODO
-clamp=2.0          # TODO
-tot_dataset_size=int(1e4) # 2**20 TODO really should use 1e8 once cpu is fixed
+clamp=1.0          
+tot_dataset_size=int(5e4) # 2**20 TODO really should use 1e8 once cpu is fixed
 
-tot_epoch=11000
-lr=2e-3
-zerosNoiseScale=5e-2
-y_noise_scale = 5e-2
+tot_epoch=20000
+lr=5e-4
+zerosNoiseScale=5e-3
+y_noise_scale = 5e-3
 
-wPred=4000.0        #1500.
-wLatent= 900.0     #300.0
-wRev= 1000.0        #500.
+wMSEf=4000. #4000.0        #1500.
+wMSEr=(1/2)*4000.
+wMMDf=900. #900.0     #300.0
+wMMDr=1000. #1000.0        #500.
+fadeIn = False # ramp up MMDr loss as epochs increase
+plot_loss_cadence = 50.
 
-latentAlphas=None#[7.1]
-backwardAlphas=None#[7.1] #[1.4, 2, 5.5, 7]
+latentAlphas=None#[1.]
+backwardAlphas=None#[1.] #[1.4, 2, 5.5, 7]
 conv_nn = False    # Choose to use convolutional layers. TODO
 multi_par=True
 load_dataset=True
@@ -115,7 +119,6 @@ do_logscale=False   # apply log10 tranform to pars
 do_normscale=True   # scale par values to be between 0 and 1
 do_waveform_est=False # make INN waveform estimation plots
 
-dataLocation1 = 'benchmark_data_%s.h5py' % run_label
 T = 1.0           # length of time series (s)
 dt = T/ndata        # sampling time (Sec)
 fnyq = 0.5/dt   # Nyquist frequency (Hz)
@@ -190,64 +193,6 @@ def make_contour_plot(ax,x,y,dataset,color='red',flip=False, kernel_lalinf=False
 
     return kernel
 
-def load_gw_data(seed=0):
-    # load first time series / pars template pickle file
-    np.random.seed(seed)
-
-    file_idx_list = []
-    h5py_ts = h5py.File("%s%s_ts_0_%sSamp%s.hdf5" % (template_dir,event_name,tot_dataset_size,tag),"r")
-    ts = h5py_ts['time_series/ts'][:]
-    h5py_par = h5py.File("%s%s_params_0_%sSamp%s.hdf5" % (template_dir,event_name,tot_dataset_size,tag),"r")
-    par = h5py_par['parameters/par'][:]
-    if len(file_idx_list) > 0:
-        ts = np.array(ts[:-1])
-        par = np.array(par[:-1])
-    else:
-        ts = np.array(ts)
-        par = np.array(par)
-
-    par = np.reshape(par,(par.shape[0],2))
-    print("loading file: _ts_0_%sSamp.hdf5" % (tot_dataset_size))
-    print("loading file: _params_0_%sSamp.hdf5" % (tot_dataset_size))
-
-    # iterate over all other data files and load them
-    for idx in file_idx_list:
-        h5py_ts = open("%s_ts_%s_%sSamp%s.hdf5" % (template_dir,str(idx),tot_dataset_size,tag),"rb")
-        ts_new = h5py_ts['time_series/ts'][:]
-        ts = np.vstack((ts,ts_new))
-
-        # load corresponding parameters template pickle file
-        h5py_par = open("%s_params_%s_%sSamp%s.hdf5" % (template_dir,str(idx),tot_dataset_size,tag),"rb")
-        par_new = np.array(h5py_par['parameters/par'][:])
-        par_new = np.reshape(par_new,(par_new.shape[0],1))
-        par = np.vstack((par,par_new))
-
-        print("loading file: _ts_%s_%sSamp.hdf5" % (str(idx),tot_dataset_size))
-        print("loading file: _params_%s_%sSamp.hdf5" % (str(idx),tot_dataset_size))
-
-        if idx < file_idx_list[-1]:
-            ts = ts[:-1]
-            par = par[:-1]
-
-    ts = [ts]
-
-    signal_ts_noisefree = np.reshape(ts[0], (ts[0].shape[0],ts[0].shape[2]))
-
-    signal_pars = par
-
-    # shuffle training set
-    shuffling = np.random.permutation(tot_dataset_size)
-    signal_ts_noisefree = signal_ts_noisefree[shuffling]
-    signal_pars = signal_pars[shuffling]
-    names = [parnames[int(i)] for i in usepars]
-    xvec = np.arange(ndata)/float(ndata)
-
-    signal_ts_noise = np.zeros(signal_ts_noisefree.shape)
-    for i in range(len(signal_ts_noisefree)):
-        signal_ts_noise[i] = signal_ts_noisefree[i] + np.random.normal(loc=0.0, scale=sigma, size=ndata)
-
-    return signal_ts_noise, signal_pars, xvec, signal_ts_noisefree, names 
-
 def plot_wvf_est(fig_wvf,axes_wvf,generated_ml_images,generated_standard_images,signal_image,noise_signal,samp_freq,i,j,N_VIEWED=N_VIEWED,zoom=False):
     """
     Plot waveform estimates on noise-free waveform given INN parameter estimates
@@ -314,37 +259,48 @@ def plot_wvf_est(fig_wvf,axes_wvf,generated_ml_images,generated_standard_images,
 
 def main():
 
+    # define names of parameters to have PE done on them
     parnames=['mc','phi','t0']
+
+    # TODO
+    tot_dataset_size=1000
+    split = 100
+    train_directory = 'training_sets/tset_tot-1000_split-100/'
 
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
-    #tot_dataset_size = int(1e4)
+    # setup training set directory - if it does not exist
+    os.system('mkdir -p %s' % train_directory)
 
+    # generate training set if load not otherwise specified
     if not load_dataset:
-        signal_train_images, sig, signal_train_pars = bilby_pe.run(sampling_frequency=ndata,N_gen=tot_dataset_size,make_train_samp=True,make_test_samp=False,make_noise=add_noise_real,n_noise=n_noise)
 
-        #signal_train_images = signal_train_images.reshape((signal_train_images.shape[0],signal_train_images.shape[2]))
-        # declare gw variants of positions and labels
+        for i in range(0,tot_dataset_size,split):
+            signal_train_images, sig, signal_train_pars = bilby_pe.run(sampling_frequency=ndata,N_gen=split,make_train_samp=True,make_test_samp=False,make_noise=add_noise_real,n_noise=n_noise)
 
-        # scale t0 par to be between 0 and 1
-        signal_train_pars[:,2] = ref_gps_time - signal_train_pars[:,2]
+            # declare gw variants of positions and labels
 
-        labels = torch.tensor(signal_train_images, dtype=torch.float)
-        pos = torch.tensor(signal_train_pars, dtype=torch.float)
-        sig = torch.tensor(sig, dtype=torch.float)
-        x = np.arange(ndata)/float(ndata)
+            # scale t0 par to be between 0 and 1
+            signal_train_pars[:,2] = ref_gps_time - signal_train_pars[:,2]
+
+            labels = torch.tensor(signal_train_images, dtype=torch.float)
+            pos = torch.tensor(signal_train_pars, dtype=torch.float)
+            sig = torch.tensor(sig, dtype=torch.float)
+            x = np.arange(ndata)/float(ndata)
         
-        print("Loaded data ...")
+            print("Loaded data ...")
 
-        hf = h5py.File('benchmark_data_%s.h5py' % run_label, 'w')
-        hf.create_dataset('pos', data=pos)
-        hf.create_dataset('labels', data=labels)
-        hf.create_dataset('x', data=x)
-        hf.create_dataset('sig', data=sig)
-        hf.create_dataset('parnames', data=np.string_(parnames))
-        hf.close()
+            hf = h5py.File('%s/data_%d-%d_%dNoise.h5py' % (train_directory,(i+split),tot_dataset_size,n_noise), 'w')
+            hf.create_dataset('pos', data=pos)
+            hf.create_dataset('labels', data=labels)
+            hf.create_dataset('x', data=x)
+            hf.create_dataset('sig', data=sig)
+            hf.create_dataset('parnames', data=np.string_(parnames))
+            hf.close()
 
-    data = AtmosData([dataLocation1], test_split, ref_gps_time, resampleWl=None, logscale=do_logscale, normscale=do_normscale)
+
+    # load in training set TODO
+    data = AtmosData([train_directory], test_split, ref_gps_time, resampleWl=None, logscale=do_logscale, normscale=do_normscale)
     data.split_data_and_init_loaders(batchsize)
 
     # seperate the test data for plotting
@@ -435,8 +391,9 @@ def main():
 
                 # save the results to file
                 fig.canvas.draw()
-                plt.savefig('%strue_samples_%d%d.png' % (out_dir,k,nextk),dpi=360)
+                fig.savefig('%strue_samples_%d%d.png' % (out_dir,k,nextk),dpi=360)
 
+    plt.close()
     def store_pars(f,pars):
         for i in pars.keys():
             f.write("%s: %s\n" % (i,str(pars[i])))
@@ -450,22 +407,23 @@ def main():
     f=open("%s_run-pars.txt" % run_label,"w+")
     pars_to_store={"sigma":sigma,"ndata":ndata,"T":T,"seed":seed,"n_neurons":n_neurons,"bound":bound,"conv_nn":conv_nn,"filtsize":filtsize,"dropout":dropout,
                    "clamp":clamp,"ndim_z":ndim_z,"tot_epoch":tot_epoch,"lr":lr, "latentAlphas":latentAlphas, "backwardAlphas":backwardAlphas,
-                   "zerosNoiseScale":zerosNoiseScale,"wPred":wPred,"wLatent":wLatent,"wRev":wRev,"tot_dataset_size":tot_dataset_size_save,
+                   "zerosNoiseScale":zerosNoiseScale,"wMSEf":wMSEf,"wMSEr":wMSEr,"wMMDf":wMMDf,"wMMDr":wMMDr,"tot_dataset_size":tot_dataset_size_save,
                    "numInvLayers":numInvLayers,"batchsize":batchsize}
     store_pars(f,pars_to_store)
 
+    # define INN model
     inRepr = [('mc', 1), ('phi', 1), ('t0', 1), ('!!PAD',)]
     outRepr = [('LatentSpace', ndim_z), ('!!PAD',), ('timeseries', data.atmosOut.shape[1])]
-    model = RadynversionNet(inRepr, outRepr, dropout=dropout, zeroPadding=0, minSize=ndim_tot, numInvLayers=numInvLayers)
+    model = RadynversionNet(inRepr, outRepr, dropout=dropout, zeroPadding=0, minSize=ndim_tot, numInvLayers=numInvLayers, clamp=clamp)
 
     # Construct the class that trains the model, the initial weighting between the losses, learning rate, and the initial number of epochs to train for.
 
 
     trainer = RadynversionTrainer(model, data, dev)
-    trainer.training_params(tot_epoch, lr=lr, zerosNoiseScale=zerosNoiseScale, wPred=wPred, wLatent=wLatent, wRev=wRev,
+    trainer.training_params(tot_epoch, lr=lr, zerosNoiseScale=zerosNoiseScale, wMSEf=wMSEf, wMSEr=wMSEr, wLatent=wMMDf, wRev=wMMDr,
                             loss_latent=Loss.mmd_multiscale_on(dev, alphas=latentAlphas),
                             loss_backward=Loss.mmd_multiscale_on(dev, alphas=backwardAlphas),
-                            loss_fit=Loss.mse)
+                            loss_fit=Loss.mse,fadeIn=fadeIn)
     totalEpochs = 0
 
     # Train the model for these first epochs with a nice graph that updates during training.
@@ -570,7 +528,7 @@ def main():
                                                 pars['mc'] = sig[0]
                                                 #pars['lum_dist'] = sig[1]
                                                 pars['phase'] = sig[2]
-                                                pars['geocent_time'] = ref_gps_time -1 + sig[3]
+                                                pars['geocent_time'] = ref_gps_time -1 + sig[2]
                                                 if prior[0] < pars['mc'] < prior[1] and prior[2] < pars['phase'] < prior[3] and prior[4] < sig[2] < prior[5]:
                                                     gen_wvfs.append(gen_template(T,ndata,
                                                                          pars,(ref_gps_time-0.5),wvf_est=True)[0:2])
@@ -623,9 +581,10 @@ def main():
                                     # plot the 1D samples and the 5% confidence bounds
                                     ol_hist = data_maker.overlap(samples[cnt,:,k].reshape(N_samp,1),rev_x[:,k].reshape(N_samp,1),k)
                                     olvec_1d[i,j,s,k] = ol_hist
+                                    n_hist_bins=30
                                     axes_1d[i,j].clear()
-                                    axes_1d[i,j].hist(samples[cnt,:,k],color='b',bins=50,alpha=0.5,normed=True)
-                                    axes_1d[i,j].hist(rev_x[:,k],color='r',bins=50,alpha=0.5,normed=True)
+                                    axes_1d[i,j].hist(samples[cnt,:,k],color='b',bins=n_hist_bins,range=(prior_min[k],prior_max[k]),alpha=0.5,normed=True)
+                                    axes_1d[i,j].hist(rev_x[:,k],color='r',bins=n_hist_bins,range=(prior_min[k],prior_max[k]),alpha=0.5,normed=True)
                                     axes_1d[i,j].set_xlim([prior_min[k],prior_max[k]])
                                     axes_1d[i,j].axvline(x=pos_test[cnt,k], linewidth=0.5, color='black')
                                     axes_1d[i,j].axvline(x=confidence_bd(samples[cnt,:,k])[0], linewidth=0.5, color='b')
@@ -645,10 +604,10 @@ def main():
                                     if k == (ndim_x-2):
                                         # plot the 1D samples and the 5% confidence bounds
                                         ol_hist = data_maker.overlap(samples[cnt,:,k+1].reshape(N_samp,1),rev_x[:,k+1].reshape(N_samp,1),k+1)
-                                        olvec_1d[i,j,s,k] = ol_hist
+                                        olvec_1d[i,j,s,k+1] = ol_hist
                                         axes_1d_last[i,j].clear()
-                                        axes_1d_last[i,j].hist(samples[cnt,:,k+1],color='b',bins=50,alpha=0.5,normed=True)
-                                        axes_1d_last[i,j].hist(rev_x[:,k+1],color='r',bins=50,alpha=0.5,normed=True)
+                                        axes_1d_last[i,j].hist(samples[cnt,:,k+1],color='b',bins=n_hist_bins,range=(prior_min[k+1],prior_max[k+1]),alpha=0.5,normed=True)
+                                        axes_1d_last[i,j].hist(rev_x[:,k+1],color='r',bins=n_hist_bins,range=(prior_min[k+1],prior_max[k+1]),alpha=0.5,normed=True)
                                         axes_1d_last[i,j].set_xlim([prior_min[k+1],prior_max[k+1]])
                                         axes_1d_last[i,j].axvline(x=pos_test[cnt,k+1], linewidth=0.5, color='black')
                                         axes_1d_last[i,j].axvline(x=confidence_bd(samples[cnt,:,k+1])[0], linewidth=0.5, color='b')
@@ -681,10 +640,15 @@ def main():
                             fig.savefig('%slatest-2d_%d%d.png' % (out_dir,k,nextk),dpi=360)
                             #fig.close()
                             cnt_2d+=1
+
+                            fig_wvf.savefig('%swvf_estimates_epoch-%04d.pdf' % (out_dir,epoch))
                 s += 1
 
             # plot overlap results
             if np.remainder(epoch,plot_cadence)==0:
+                plt.close(fig_1d)
+                plt.close(fig_1d_last)
+                plt.close(fig)
                 fig_log = plt.figure(figsize=(6,6))             
                 axes_log = fig_log.add_subplot(1,1,1)
                 for i in range(r):
@@ -694,11 +658,12 @@ def main():
                 axes_log.set_ylabel('overlap')
                 axes_log.set_xlabel('epoch (log)')
                 axes_log.set_ylim([0,1])
-                plt.savefig('%soverlap_logscale.png' % out_dir, dpi=360)
-                plt.close()  
+                fig_log.savefig('%soverlap_logscale.png' % out_dir, dpi=360)
+                plt.close(fig_log) 
 
                 # save wvf estimate results
                 fig_wvf.savefig('%swvf_estimates_latest.pdf' % out_dir)    
+                plt.close(fig_wvf)
 
                 fig = plt.figure(figsize=(6,6))
                 axes = fig.add_subplot(1,1,1)
@@ -709,12 +674,12 @@ def main():
                 axes.set_ylabel('overlap')
                 axes.set_xlabel('epoch')
                 axes.set_ylim([0,1])
-                plt.savefig('%soverlap.png' % out_dir, dpi=360)
-                plt.close()  
+                fig.savefig('%soverlap.png' % out_dir, dpi=360)
+                plt.close(fig)  
 
             #egg = True
             #if egg==False:
-            if np.remainder(epoch,plot_cadence)==0 and (epoch>5):
+            if np.remainder(epoch,plot_loss_cadence)==0 and (epoch>5):
                 fig, axis = plt.subplots(4,1, figsize=(10,8))
                 #fig.show()
                 fig.canvas.draw()
@@ -728,7 +693,7 @@ def main():
                 fig.suptitle('Current Loss: %.2e, min loss: %.2e' % (loss, np.nanmin(np.abs(losses))))
                 axis[0].semilogy(np.arange(len(losses)), np.abs(losses))
                 for i, lo in enumerate(lossVec):
-                    axis[1].semilogy(np.arange(len(losses)), lo, '--', label=lossLabels[i])
+                    axis[1].semilogy(np.arange(len(losses)), lo, '-', label=lossLabels[i])
                 axis[1].legend(loc='upper left')
                 tNow = time()
                 elapsed = int(tNow - tStart)
@@ -737,6 +702,12 @@ def main():
                 if epoch % 2 == 0:
                     mses = trainer.test(maxBatches=1)
                     lineProfiles = mses[2]
+
+                    # make predicted latent space distriubtion plots
+                    fig_latent = corner.corner(lineProfiles[:, model.outSchema.LatentSpace].cpu().numpy(), 
+                                               plot_contours=False, labels=[r"latent1", r"latent2", r"latent3"])
+                    fig_latent.savefig('%slatent_space.pdf' % out_dir)
+                    plt.close(fig_latent)
                 
                 if epoch % 10 == 0:
                     alphaRange, mmdF, mmdB, idxF, idxB = trainer.review_mmd()
@@ -756,6 +727,7 @@ def main():
                 
                 fig.canvas.draw()
                 fig.savefig('%slosses.pdf' % out_dir)
+                plt.close(fig)
 
     except KeyboardInterrupt:
         pass
