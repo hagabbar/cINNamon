@@ -579,8 +579,6 @@ class AtmosData:
         data['x'] = np.concatenate(np.array(data['x']), axis=0)
         data['sig'] = np.concatenate(np.array(data['sig']), axis=0)
 
-        print(data['pos'].shape)
-        exit()
         #TODO: may need to not log the training data
         self.pos = data['pos'][:]
         self.labels = data['labels'][:]
