@@ -164,7 +164,7 @@ class F_fully_connected_leaky(nn.Module):
         self.fc2d  = nn.Linear(internal_size, internal_size)
         self.fc3 = nn.Linear(internal_size, size)
 
-        self.nl1 = nn.LeakyReLU(negative_slope=leaky_slope)
+        self.nl1 = nn.ReLU()
         self.nl2 = nn.LeakyReLU(negative_slope=leaky_slope)
         self.nl2b = nn.LeakyReLU(negative_slope=leaky_slope)
         # self.nl1 = nn.ReLU()
@@ -316,20 +316,18 @@ class RadynversionTrainer:
         miniBatchIdx = 0
         if self.fadeIn:
             # normally at 0.4
-            wRevScale = min(epoch / (0.04 * 10000), 1)**3
+            wRevScale = min(epoch / 400.0, 1)**3
             self.wRevScale = wRevScale
         else:
             wRevScale = 1.0
             self.wRevScale = wRevScale
         noiseScale = (1.0 - wRevScale) * self.zerosNoiseScale
-        # noiseScale = self.zerosNoiseScale
 
         pad_fn = lambda *x: noiseScale * torch.randn(*x, device=self.dev) #+ 10 * torch.ones(*x, device=self.dev)
-#         zeros = lambda *x: torch.zeros(*x, device=self.dev)
         randn = lambda *x: torch.randn(*x, device=self.dev)
         losses = [0, 0, 0, 0]
 
-        for x, y in self.atmosData.trainLoader:
+        for x, y, y_sig in self.atmosData.trainLoader:
             miniBatchIdx += 1
 
             if miniBatchIdx > self.miniBatchesPerEpoch:
@@ -355,14 +353,21 @@ class RadynversionTrainer:
                     y_sig = y_sig
                     break
                     
-            x, y, y_sig = x.to(self.dev), y.to(self.dev), y_sig.to(self.dev)
+            n = y - y_sig
+            x, y, y_sig, n = x.to(self.dev), y.to(self.dev), y_sig.to(self.dev), n.to(self.dev)
             yClean = y.clone()
+
+            # loss factors
+            loss_factor_fwd_mmd_z = 1.0 #min(epoch / 400.0, 1)**3
+            loss_factor_rev_mse_n = min(epoch / 500.0, 1)**3 # 1000
+            loss_factor_fwd_mse_y = min(epoch / 750.0, 1)**3  # 2000
+            loss_factor_rev_mse_x = min(epoch / 10000.0, 1)**3 # 3000
 
             if extra_z:
                 xzp = self.model.inSchema.fill({'amp': x[:, 0],
                                            't0': x[:, 1],
                                            'tau': x[:, 2],
-                                           'LatentSpace': randn},
+                                           'yNoise': n[:]},
                                           zero_pad_fn=pad_fn)
             else: 
                 xp = self.model.inSchema.fill({'amp': x[:, 0], 
@@ -392,14 +397,14 @@ class RadynversionTrainer:
 #             lForward = self.wPred * self.loss_fit(yzp[:, :self.model.outSchema.LatentSpace[0]], out[:, :self.model.outSchema.LatentSpace[0]])
 
             # add z space onto x-space
-            if extra_z:
-                out_fmse = torch.cat((self.model(yzpRevRand, rev=True)[:, self.model.inSchema.LatentSpace], xzp[:, self.model.outSchema.LatentSpace[-1]+1:]),
-                                      dim=1)
-                out_fmse = self.model(out_fmse)
-                lForward = self.wPred * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[-1]+1:],
-                                                      out_fmse[:, self.model.outSchema.LatentSpace[-1]+1:])
+            #if extra_z:
+            #    out_fmse = torch.cat((self.model(yzpRevRand, rev=True)[:, self.model.inSchema.LatentSpace], xzp[:, self.model.outSchema.LatentSpace[-1]+1:]),
+            #                          dim=1)
+            #    out_fmse = self.model(out_fmse)
+            #    lForward = self.wPred * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[-1]+1:],
+            #                                          out_fmse[:, self.model.outSchema.LatentSpace[-1]+1:])
             # use a covariance loss on forward mean squared error
-            elif do_covar:
+            if do_covar:
                 # try covariance fit
                 output_cov = self.cov((out[:, self.model.outSchema.LatentSpace[-1]+1:]-y_sig_zp[:, self.model.outSchema.LatentSpace[-1]+1:]).transpose(0,1))
                 ycov_mat = self.sigma*self.sigma*torch.eye((self.ndata+self.n_neurons),device=self.dev)
@@ -408,7 +413,8 @@ class RadynversionTrainer:
                                                       ycov_mat.flatten())
 
             else:
-                lForward = self.wPred * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[-1]+1:], 
+                # compute mean squared error on only y
+                lForward = loss_factor_fwd_mse_y * self.wPred * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[-1]+1:], 
                                                       out[:, self.model.outSchema.LatentSpace[-1]+1:])
             losses[0] += lForward.data.item() / self.wPred
             #lForward_extra = self.wPred * self.loss_fit(yzp[:, self.model.outSchema.LatentSpace[-1]+1:],
@@ -466,6 +472,7 @@ class RadynversionTrainer:
                 lForward += lForwardFifthMom
 
             else:
+                # compute forward MMD on z data
                 outLatentGradOnly = torch.cat((out[:, self.model.outSchema.timeseries].data, 
                                                out[:, self.model.outSchema.LatentSpace]), 
                                               dim=1)
@@ -473,7 +480,7 @@ class RadynversionTrainer:
                                             yzp[:, self.model.outSchema.LatentSpace]), 
                                            dim=1)
             
-                lForward2 = self.wLatent * self.loss_latent(outLatentGradOnly, unpaddedTarget)
+                lForward2 = loss_factor_fwd_mmd_z * self.wLatent * self.loss_latent(out[:, self.model.outSchema.LatentSpace], yzp[:, self.model.outSchema.LatentSpace])
                 losses[1] += lForward2.data.item() / self.wLatent
                 lForward += lForward2
             
@@ -481,18 +488,18 @@ class RadynversionTrainer:
 
             lForward.backward()
 
-            yzpRev = self.model.outSchema.fill({'timeseries': yClean[:], 
+            yzpRev = self.model.outSchema.fill({'timeseries': yClean[:],
                                                 'LatentSpace': out[:, self.model.outSchema.LatentSpace].data},
                                                zero_pad_fn=pad_fn)
 
             if extra_z:
                 outRev = self.model(yzpRev, rev=True)
-                outRev = torch.cat((outRev[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1],
-                                        outRev[:, self.model.inSchema.LatentSpace]),
-                                       dim=1)
+                #outRev = torch.cat((outRev[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1],
+                #                        outRev[:, self.model.inSchema.yNoise]),
+                #                       dim=1)
                 outRevRand = self.model(yzpRevRand, rev=True)
                 outRevRand = torch.cat((outRevRand[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1],
-                                        outRevRand[:, self.model.inSchema.LatentSpace]),
+                                        outRevRand[:, self.model.inSchema.yNoise]),
                                        dim=1)                
             else:
                 outRev = self.model(yzpRev, rev=True)
@@ -505,29 +512,37 @@ class RadynversionTrainer:
             #                   dim=1)
             # lBackward = self.wRev * wRevScale * self.loss_backward(xBack, x.reshape(self.miniBatchSize, -1))
             if extra_z:
-                xzp_bMMD=torch.cat((xzp[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1],
-                                   xzp[:, self.model.inSchema.LatentSpace]), dim=1)
-                lBackward = self.wRev * wRevScale * self.loss_backward(outRevRand,
-                                                                      xzp_bMMD)
+                #xzp_bMMD=torch.cat((xzp[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1],
+                #                   xzp[:, self.model.inSchema.yNoise]), dim=1)
+                #lBackward = self.wRev * wRevScale * self.loss_fit(outRev,
+                #                                                  xzp_bMMD)
+                kld_loss = torch.nn.SmoothL1Loss(size_average=None, reduce=None, reduction='mean')
+                lBackward1 = loss_factor_rev_mse_x * self.wRev * kld_loss(outRev[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1],
+                                                                  xzp[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1])
+                lBackward2 = loss_factor_rev_mse_n * self.wRev * kld_loss(outRev[:, self.model.inSchema.yNoise],
+                                                                  xzp[:, self.model.inSchema.yNoise])
+                lBackward = lBackward1 + lBackward2
 
             else:
-                lBackward = self.wRev * wRevScale * self.loss_backward(outRevRand[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1], 
+                lBackward = self.wRev * wRevScale * self.loss_backward(outRev[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1], 
                                                                        xp[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1])
 
             scale = wRevScale if wRevScale != 0 else 1.0
-            losses[2] += lBackward.data.item() / (self.wRev * scale)
+            losses[2] += (lBackward1.data.item() / (self.wRev * scale)) + (lBackward1.data.item() / (self.wRev * scale))
             #TODO: may need to uncomment this
             #lBackward2 += 0.5 * self.wPred * self.loss_fit(outRev, xp)
             if extra_z:
-                lBackward2 = 0.5 * self.wPred * self.loss_fit(outRev,
-                                                               xzp_bMMD)
+                #lBackward2 = 0.5 * self.wPred * self.loss_fit(outRev,
+                #                                               xzp_bMMD)
+                losses[3] += 0.0
+                lTot += lBackward.data.item()
             else:
                 lBackward2 = 0.5 * self.wPred * self.loss_fit(outRev[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1], 
                                                                   xp[:, self.model.inSchema.amp[0]:self.model.inSchema.tau[-1]+1])
-            losses[3] += lBackward2.data.item() / self.wPred * 2
-            lBackward += lBackward2
+                losses[3] += lBackward2.data.item() / self.wPred * 2
+                lBackward += lBackward2
             
-            lTot += lBackward.data.item()
+                lTot += lBackward.data.item()
 
             lBackward.backward()
 
@@ -565,13 +580,13 @@ class RadynversionTrainer:
                 if batchIdx > maxBatches:
                     break
 
-                x, y = x.to(self.dev), y.to(self.dev)
+                x, y, y_sig = x.to(self.dev), y.to(self.dev), y_sig.to(self.dev)
 
                 if extra_z:
                     inp = self.model.inSchema.fill({'amp': x[:, 0],
                                                 't0': x[:, 1],
                                                 'tau': x[:, 2],
-                                                'LatentSpace': randn},
+                                                'yNoise': (y[:] - y_sig[:])},
                                                zero_pad_fn=pad_fn)
                 else:
                     inp = self.model.inSchema.fill({'amp': x[:, 0],
@@ -700,6 +715,7 @@ class AtmosData:
         self.timeseries = torch.tensor(data['labels'][:]).float()#.log10()
         self.atmosIn=data['pos'][:]
         self.atmosOut=data['labels'][:]
+        self.atmosSig=data['sig'][:-test_split]
 
     def split_data_and_init_loaders(self, batchSize, splitSeed=41, padLines=False, linePadValue='Edge', zeroPadding=0, testingFraction=0.2):
         self.batchSize = batchSize
@@ -748,14 +764,16 @@ class AtmosData:
 
         trainIn = self.atmosIn[:-test_num]
         trainOut = self.atmosOut[:-test_num]
+        trainSig = self.atmosSig[:-test_num]
         testIn = self.atmosIn[-test_num:]
         testOut = self.atmosOut[-test_num:]
+        testSig = self.atmosSig[-test_num:]
 
         self.testLoader = torch.utils.data.DataLoader(
-                    torch.utils.data.TensorDataset(torch.tensor(testIn), torch.tensor(testOut)), 
+                    torch.utils.data.TensorDataset(torch.tensor(testIn), torch.tensor(testOut), torch.tensor(testSig)), 
                     batch_size=batchSize, shuffle=True, drop_last=True)
         self.trainLoader = torch.utils.data.DataLoader(
-                    torch.utils.data.TensorDataset(torch.tensor(trainIn), torch.tensor(trainOut)),
+                    torch.utils.data.TensorDataset(torch.tensor(trainIn), torch.tensor(trainOut), torch.tensor(trainSig)),
                     batch_size=self.batchSize, shuffle=True, drop_last=True)
                     
 
