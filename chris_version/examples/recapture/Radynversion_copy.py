@@ -53,6 +53,7 @@ from time import time
 
 from FrEIA.framework import InputNode, OutputNode, Node, ReversibleGraphNet
 from FrEIA.modules import rev_multiplicative_layer, F_fully_connected, F_conv
+from double_network import nn_double_f, nn_double_r, DoubleNetTrainer
 
 import chris_data as data_maker
 
@@ -61,27 +62,27 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 # global parameters
 sig_model = 'sg'   # the signal model to use
 usepars = [0,1,2]    # parameter indices to use
-run_label='gpu4'
+run_label='gpu0'
 out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/multipar/%s" % run_label
 do_posterior_plots=True
-ndata=32           # length of 1 data sample
+ndata=16           # length of 1 data sample
 ndim_x=3           # number of parameters to PE on
 ndim_y = ndata     # length of 1 data sample
 
-ndim_z = 3      # size of latent space
+ndim_z = 16      # size of latent space
 
 Ngrid=20
-n_neurons = 512
-ndim_tot = max(ndim_x,ndim_y+ndim_z) + n_neurons # 384     
-r = 4             # the grid dimension for the output tests
+n_neurons = 64
+ndim_tot = max(ndim_x+ndim_y,ndim_y+ndim_z) + n_neurons # 384     
+r = 2             # the grid dimension for the output tests
 sigma = 0.2        # the noise std
 seed = 1           # seed for generating data
 test_split = r*r   # number of testing samples to use
 test_sample_idx=4
 
-N_samp = 1000 # number of test samples to use after training
-plot_cadence = 100  # make plots every N iterations
-numInvLayers=7
+N_samp = 5000 # number of test samples to use after training
+plot_cadence = 200  # make plots every N iterations
+numInvLayers=6
 dropout=0.0
 batchsize=2048
 filtsize = 3       # TODO
@@ -89,24 +90,26 @@ clamp=2.0          # TODO
 tot_dataset_size=int(1e4) # 2**20 TODO really should use 1e8 once cpu is fixed
 
 tot_epoch=1000000
-lr=5.0e-5
+lr=2.5e-4
 zerosNoiseScale=5e-2
-y_noise_scale = None#2.0e-1
+y_noise_scale = None
 
-wPred=4000.0        #4000.0
-wLatent= 900.0     #900.0
-wRev= 1000.0        #1000.0
+wPred=500.0        #4000.0
+wLatent= 2000.0     #900.0
+wRev= 2000.0        #1000.0
 
-do_covar=True      # if True, use a covariance loss on the forward mean squared error
+do_cnn = True     # if True, use cnn in double neural network
+do_double_nn=True    # if True, use the double neural network model. If False, use Radyn model
+do_covar=False      # if True, use a covariance loss on the forward mean squared error
 review_mmd=False   # if True, turn on ideal alpha finder
-extra_z = False    # if True, add extra Z dimension in x vector
+extra_z = True    # if True, append y noise realization to x vector
 fadeIn=True       # If True, fade in the backward MMD loss
-latentAlphas=None#[0.2, 0.5, 0.9, 1.3, 2.4, 5.0, 10.0, 20.0, 40.0, 500.0, 700.0, 900.0]
-backwardAlphas=None#[0.2, 0.5, 0.9, 1.3, 2.4, 5.0, 10.0, 20.0, 40.0, 500.0, 700.0, 900.0] # [1.4, 2, 5.5, 7]
+latentAlphas=[1.0]#[0.2, 0.5, 0.9, 1.3, 2.4, 5.0, 10.0, 20.0, 40.0, 500.0, 700.0, 900.0]
+backwardAlphas=None # [1.4, 2, 5.5, 7]
 conv_nn = False    # Choose to use convolutional layers. TODO
 multi_par=True
 load_dataset=False  # use prevoiusly made training set
-load_model=False   # use previously trained model
+load_model=False  # use previously trained model
 do_contours=True
 gen_inf_temp=True  # generate templates on the fly
 do_mcmc=True
@@ -177,7 +180,7 @@ def plot_pp(model,labels_test,pos_test,zeros_noise_scale,y_noise_scale,Nsamp,Npp
         plt.close()
     return
 
-def plot_y_evolution(model,dim,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,i_epoch,conv=False):
+def plot_y_evolution(model,dim,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
     """
     Plot examples of test y-data generation
     """
@@ -204,9 +207,14 @@ def plot_y_evolution(model,dim,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,i_e
     x_padded = torch.cat((x,pad_x),dim=1)
 
     # apply forward model to the x data
-    output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
-    output_y = output[:,model.outSchema.timeseries]  # extract the model output y
-    output_z = output[:,model.outSchema.LatentSpace]  # extract the model output z
+    if do_double_nn:
+        output = model_f(torch.cat((x),dim=1))#.reshape(out_shape)
+        output_y = output[:,:ndim_y]  # extract the model output y
+        output_z = output[:,ndim_y:]  # extract the model output z
+    else:
+        output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
+        output_y = output[:,model.outSchema.timeseries]  # extract the model output y
+        output_z = output[:,model.outSchema.LatentSpace]  # extract the model output z
     y = output_y.cpu().data.numpy()
     z = output_z.cpu().data.numpy()
 
@@ -252,7 +260,7 @@ def plot_y_evolution(model,dim,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,i_e
     plt.close(fig)
     return
 
-def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False):
+def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
     """
     Plots the distribution of latent z variables
     """
@@ -274,16 +282,22 @@ def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch
    
     # run the x test data through the model
     x = torch.tensor(x_test,dtype=torch.float,device=dev).clone().detach()
+    y_test = torch.tensor(y_test,dtype=torch.float,device=dev).clone().detach()
+    sig_test = torch.tensor(sig_test,dtype=torch.float,device=dev).clone().detach()
 
     # make the new padding for the noisy data and latent vector data
-    pad_x = torch.zeros(Nsamp,ndim_tot-ndim_x,device=dev)
+    pad_x = torch.zeros(Nsamp,ndim_tot-ndim_x-ndim_y,device=dev)
 
     # make a padded zy vector (with all new noise)
-    x_padded = torch.cat((x,pad_x),dim=1)
+    x_padded = torch.cat((x,pad_x,y_test-sig_test),dim=1)
 
     # apply forward model to the x data
-    output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
-    output_z = output[:,model.outSchema.LatentSpace]  # extract the model output y
+    if do_double_nn:
+        output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
+        output_z = output[:,ndim_y:]  # extract the model output y
+    else:
+        output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
+        output_z = output[:,model.outSchema.LatentSpace]  # extract the model output y
     z = output_z.cpu().data.numpy()
     C = np.cov(z.transpose())
 
@@ -355,7 +369,7 @@ def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch
 
     return
 
-def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i_epoch,conv=False):
+def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
     """
     Plot examples of test y-data generation
     """
@@ -390,8 +404,12 @@ def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i
         yz_padded = torch.cat((y,z,pad_yz),dim=1)
 
         # apply backward model to the padded yz data
-        output = model(yz_padded.reshape(in_shape),rev=True)#.reshape(out_shape)
-        output_x = output[:,model.inSchema.amp[0]:model.inSchema.tau[-1]+1]  # extract the model output y
+        if do_double_nn:
+            output = model_r(torch.cat((y,z), dim=1))#.reshape(out_shape)
+            output_x = output[:,:ndim_x]  # extract the model output y
+        else:
+            output = model(yz_padded.reshape(in_shape),rev=True)#.reshape(out_shape)
+            output_x = output[:,model.inSchema.amp[0]:model.inSchema.tau[-1]+1]  # extract the model output y
         x = output_x.cpu().data.numpy()
 
         # loop over input parameters
@@ -423,7 +441,7 @@ def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i
     plt.close()
     return
 
-def plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False):
+def plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
     """
     Plots the joint distributions of y variables
     """
@@ -445,16 +463,22 @@ def plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch
 
     # run the x test data through the model
     x = torch.tensor(x_test,dtype=torch.float,device=dev).clone().detach()
+    y_test = torch.tensor(y_test,dtype=torch.float,device=dev).clone().detach()
+    sig_test = torch.tensor(sig_test,dtype=torch.float,device=dev).clone().detach()
 
     # make the new padding for the noisy data and latent vector data
-    pad_x = torch.zeros(Nsamp,ndim_tot-ndim_x,device=dev)
+    pad_x = torch.zeros(Nsamp,ndim_tot-ndim_x-ndim_y,device=dev)
 
     # make a padded zy vector (with all new noise)
-    x_padded = torch.cat((x,pad_x),dim=1)
+    x_padded = torch.cat((x,pad_x,y_test-sig_test),dim=1)
 
     # apply forward model to the x data
-    output = model(x_padded.reshape(in_shape))
-    output_y = output[:, model.outSchema.timeseries]
+    if do_double_nn:
+        output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
+        output_y = output[:,:ndim_y]  # extract the model output y    
+    else:
+        output = model(x_padded.reshape(in_shape))
+        output_y = output[:, model.outSchema.timeseries]
     y = output_y.cpu().data.numpy()
     sig_test = sig_test.cpu().data.numpy()
     dy = y - sig_test
@@ -529,7 +553,7 @@ def result_stat_tests(inn_samps, mcmc_samps, cnt, parnames):
 
     return ks_mcmc_arr, ks_inn_arr, ad_mcmc_arr, ad_inn_arr
 
-def plot_y_test(model,Nsamp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,r,i_epoch,conv=False):
+def plot_y_test(model,Nsamp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,r,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
     """
     Plot examples of test y-data generation
     """
@@ -552,16 +576,22 @@ def plot_y_test(model,Nsamp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,r
 
     # run the x test data through the model
     x = torch.tensor(x_test[:r*r,:],dtype=torch.float,device=dev).clone().detach()
+    y_test = torch.tensor(y_test[:r*r,:],dtype=torch.float,device=dev).clone().detach()
+    sig_test = torch.tensor(sig_test[:r*r,:],dtype=torch.float,device=dev).clone().detach()
 
     # make the new padding for the noisy data and latent vector data
-    pad_x = torch.zeros(r*r,ndim_tot-ndim_x,device=dev)
+    pad_x = torch.zeros(r*r,ndim_tot-ndim_x-ndim_y,device=dev)
  
     # make a padded zy vector (with all new noise)
-    x_padded = torch.cat((x,pad_x),dim=1)
+    x_padded = torch.cat((x,pad_x,y_test-sig_test),dim=1)
 
     # apply forward model to the x data
-    output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
-    output_y = output[:,model.outSchema.timeseries]  # extract the model output y
+    if do_double_nn:
+        output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
+        output_y = output[:,:ndim_y]  # extract the model output y
+    else:
+        output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
+        output_y = output[:,model.outSchema.timeseries]  # extract the model output y
     y = output_y.cpu().data.numpy()
 
     cnt = 0
@@ -596,6 +626,7 @@ def main():
     # setup output directory - if it does not exist
     os.system('mkdir -p %s' % out_dir)
     os.system('mkdir -p %s/latest' % out_dir)
+    os.system('mkdir -p %s/animations' % out_dir)
 
 
     # generate data
@@ -713,22 +744,32 @@ def main():
                    "numInvLayers":numInvLayers,"batchsize":batchsize}
     store_pars(f,pars_to_store)
 
-    if extra_z: inRepr = [('amp', 1), ('t0', 1), ('tau', 1), ('!!PAD',), ('LatentSpace', ndim_z)]
+    if extra_z: inRepr = [('amp', 1), ('t0', 1), ('tau', 1), ('!!PAD',), ('yNoise', data.atmosOut.shape[1])]
     else: inRepr = [('amp', 1), ('t0', 1), ('tau', 1), ('!!PAD',)]
     outRepr = [('LatentSpace', ndim_z), ('!!PAD',), ('timeseries', data.atmosOut.shape[1])]
-    model = RadynversionNet(inRepr, outRepr, dropout=dropout, zeroPadding=0, minSize=ndim_tot, numInvLayers=numInvLayers)
+    if do_double_nn:
+        model_f = nn_double_f((ndim_x+ndim_y),(ndim_y+ndim_z))
+        model_r = nn_double_r((ndim_y+ndim_z),(ndim_x+ndim_y))
+    else:
+        model = RadynversionNet(inRepr, outRepr, dropout=dropout, zeroPadding=0, minSize=ndim_tot, numInvLayers=numInvLayers)
 
     # Construct the class that trains the model, the initial weighting between the losses, learning rate, and the initial number of epochs to train for.
 
     # load previous model if asked
-    if load_model: model.load_state_dict(torch.load('models/gpu0_model.pt')) #% run_label))
+    if load_model: model.load_state_dict(torch.load('models/gpu5_model.pt')) #% run_label))
 
-    trainer = RadynversionTrainer(model, data, dev, load_model=load_model)
-    trainer.training_params(tot_epoch, lr=lr, fadeIn=fadeIn, zerosNoiseScale=zerosNoiseScale, wPred=wPred, wLatent=wLatent, wRev=wRev,
-                            loss_latent=Loss.mmd_multiscale_on(dev, alphas=latentAlphas),
-                            loss_backward=Loss.mmd_multiscale_on(dev, alphas=backwardAlphas),
-                            loss_fit=Loss.mse,ndata=ndata,sigma=sigma,seed=seed,n_neurons=n_neurons,batchSize=batchsize,usepars=usepars,
-                            y_noise_scale=y_noise_scale)
+    if do_double_nn:
+        trainer = DoubleNetTrainer(model_f, model_r, data, dev, load_model=load_model)
+        trainer.training_params(tot_epoch, lr=lr, fadeIn=fadeIn,
+                                loss_latent=Loss.mmd_multiscale_on(dev, alphas=latentAlphas),
+                                loss_fit=Loss.mse,ndata=ndata,sigma=sigma,seed=seed,batchSize=batchsize,usepars=usepars)
+    else:
+        trainer = RadynversionTrainer(model, data, dev, load_model=load_model)
+        trainer.training_params(tot_epoch, lr=lr, fadeIn=fadeIn, zerosNoiseScale=zerosNoiseScale, wPred=wPred, wLatent=wLatent, wRev=wRev,
+                                loss_latent=Loss.mmd_multiscale_on(dev, alphas=latentAlphas),
+                                loss_backward=Loss.mmd_multiscale_on(dev, alphas=backwardAlphas),
+                                loss_fit=Loss.mse,ndata=ndata,sigma=sigma,seed=seed,n_neurons=n_neurons,batchSize=batchsize,usepars=usepars,
+                                y_noise_scale=y_noise_scale)
     totalEpochs = 0
 
     # Train the model for these first epochs with a nice graph that updates during training.
@@ -752,12 +793,22 @@ def main():
             print('Epoch %s/%s' % (str(epoch),str(trainer.numEpochs)))
             totalEpochs += 1
 
-            trainer.scheduler.step()
+            if do_double_nn:
+                trainer.scheduler_f.step()
         
-            loss, indLosses = trainer.train(epoch,gen_inf_temp=gen_inf_temp,extra_z=extra_z,do_covar=do_covar)
+                loss, indLosses = trainer.train(epoch,gen_inf_temp=gen_inf_temp,extra_z=extra_z, do_cnn=do_cnn)
+            else:
+                trainer.scheduler.step()
 
-            # save trained model
-            torch.save(model.state_dict(), 'models/%s_model.pt' % run_label)
+                loss, indLosses = trainer.train(epoch,gen_inf_temp=gen_inf_temp,extra_z=extra_z,do_covar=do_covar)
+
+            if do_double_nn:
+                # save trained model
+                torch.save(model_f.state_dict(), 'models/%s_model_f.pt' % run_label)
+                torch.save(model_r.state_dict(), 'models/%s_model_r.pt' % run_label)
+            else:
+                # save trained model
+                torch.save(model.state_dict(), 'models/%s_model.pt' % run_label)
 
             # loop over a few cases and plot results in a grid
             if np.remainder(epoch,plot_cadence)==0:
@@ -777,33 +828,21 @@ def main():
                                     # convert data into correct format
                                     y_samps = np.tile(np.array(labels_test[cnt,:]),N_samp).reshape(N_samp,ndim_y)
                                     y_samps = torch.tensor(y_samps, dtype=torch.float)
-                                    #y_samps = torch.tensor(y_samps,dtype=torch.float,device=dev)
 
                                     # add noise to y data (why?)
                                     #y = y_samps + y_noise_scale * torch.randn(N_samp, ndim_y, device=dev)
-
-                                    # make the new padding for the noisy data and latent vector data
-                                    #pad_zy = zerosNoiseScale * torch.randn(N_samp,ndim_tot-ndim_y-ndim_z,device=dev)
-
-                                    # make some z data
-                                    #z = torch.randn(N_samp, ndim_z, device=dev)
-
-                                    # make a padded zy vector (with all new noise)
-                                    #zy_rev_padded = torch.cat((y,z,pad_zy),dim=1)
-
-                                    # apply reverse model to the y data and original z data
-                                    #output_rev = model(zy_rev_padded,rev=True)
-                                    #output_rev_x = output_rev[:,:ndim_x]  # extract the model output x
-                                    #rev_x = output_rev_x.cpu().data.numpy()
-
-                                    #y_samps += y_noise_scale * torch.randn(N_samp, ndim_y)
-                                    y_samps = torch.cat([torch.randn(N_samp, ndim_z), zerosNoiseScale * 
-                                        torch.zeros(N_samp, ndim_tot - ndim_y - ndim_z),
-                                        y_samps], dim=1)
+                                    if do_double_nn:
+                                        y_samps = torch.cat([torch.randn(N_samp, ndim_z),
+                                            y_samps], dim=1)
+                                    else:
+                                        y_samps = torch.cat([torch.randn(N_samp, ndim_z), zerosNoiseScale * 
+                                            torch.zeros(N_samp, ndim_tot - ndim_y - ndim_z),
+                                            y_samps], dim=1)
                                     y_samps = y_samps.to(dev)
 
                                     # use the network to predict parameters
-                                    rev_x = model(y_samps, rev=True)
+                                    if do_double_nn: rev_x = model_r(y_samps)
+                                    else: rev_x = model(y_samps, rev=True)
                                     rev_x = rev_x.cpu().data.numpy()
 
                                     # compute the n-d overlap
@@ -858,28 +897,55 @@ def main():
                 for i in range(r):
                     for j in range(r):
                         color = next(axes._get_lines.prop_cycler)['color']
-                        axes.semilogx(np.arange(tot_epoch, step=plot_cadence),olvec[i,j,:],alpha=0.5, color=color)
+                        axes.semilogx(np.arange(epoch, step=plot_cadence),olvec[i,j,:int((epoch)/plot_cadence)],alpha=0.5, color=color)
+                        axes.plot([int(epoch)],[olvec[i,j,int(epoch/plot_cadence)]],'.', color=color)
+                axes.grid()
+                axes.set_ylabel('overlap')
+                axes.set_xlabel('epoch')
+                axes.set_ylim([0,1])
+                plt.savefig('%s/latest/overlap_logscale.png' % out_dir, dpi=360)
+                plt.close(fig)      
+
+                fig, axes = plt.subplots(1,figsize=(6,6))
+                for i in range(r):
+                    for j in range(r):
+                        color = next(axes._get_lines.prop_cycler)['color']
+                        axes.plot(np.arange(epoch, step=plot_cadence),olvec[i,j,:int((epoch)/plot_cadence)],alpha=0.5, color=color)
                         axes.plot([int(epoch)],[olvec[i,j,int(epoch/plot_cadence)]],'.', color=color)
                 axes.grid()
                 axes.set_ylabel('overlap')
                 axes.set_xlabel('epoch')
                 axes.set_ylim([0,1])
                 plt.savefig('%s/latest/overlap.png' % out_dir, dpi=360)
-                plt.close(fig)      
+                plt.close(fig)
 
-                # plot predicted time series vs. actually time series examples
-                plot_y_test(model,N_samp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,r,epoch,conv=False)
+                if do_double_nn:
+                    # plot predicted time series vs. actually time series examples
+                    model=None
+                    plot_y_test(model,N_samp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,r,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
 
-                # make y_dist_plot
-                plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False)
+                    # make y_dist_plot
+                    plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
 
-                plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,out_dir,epoch,conv=False)
+                    plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
 
-                plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False)
+                    plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
+
+                else:
+                    # plot predicted time series vs. actually time series examples
+                    plot_y_test(model,N_samp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,r,epoch,conv=False)
+
+                    # make y_dist_plot
+                    plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False)
+
+                    plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,out_dir,epoch,conv=False)
+
+                    plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False)
 
                 # plot evolution of y
-                for c in range(ndim_x):
-                    plot_y_evolution(model,c,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,epoch,conv=False) 
+                if not do_double_nn:
+                    for c in range(ndim_x):
+                        plot_y_evolution(model,c,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True) 
 
                 # plot ad and ks results [ks_mcmc_arr,ks_inn_arr,ad_mcmc_arr,ad_inn_arr]
                 for p in range(ndim_x):
