@@ -62,8 +62,8 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 # global parameters
 sig_model = 'sg'   # the signal model to use
 usepars = [0,1,2]    # parameter indices to use
-run_label='gpu0'
-out_dir = "/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/multipar/%s" % run_label
+run_label='gpu1'
+out_dir = "D:/LIGO/cINNamon_output/%s" % run_label
 do_posterior_plots=True
 ndata=16           # length of 1 data sample
 ndim_x=3           # number of parameters to PE on
@@ -81,7 +81,7 @@ test_split = r*r   # number of testing samples to use
 test_sample_idx=4
 
 N_samp = 5000 # number of test samples to use after training
-plot_cadence = 200  # make plots every N iterations
+plot_cadence = 500  # make plots every N iterations
 numInvLayers=6
 dropout=0.0
 batchsize=2048
@@ -180,7 +180,7 @@ def plot_pp(model,labels_test,pos_test,zeros_noise_scale,y_noise_scale,Nsamp,Npp
         plt.close()
     return
 
-def plot_y_evolution(model,dim,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
+def plot_y_evolution(model,dim,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False,do_cnn=False):
     """
     Plot examples of test y-data generation
     """
@@ -260,7 +260,7 @@ def plot_y_evolution(model,dim,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,i_e
     plt.close(fig)
     return
 
-def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
+def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False,do_cnn=False):
     """
     Plots the distribution of latent z variables
     """
@@ -293,8 +293,13 @@ def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch
 
     # apply forward model to the x data
     if do_double_nn:
-        output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
-        output_z = output[:,ndim_y:]  # extract the model output y
+        if do_cnn:
+            data = torch.cat((x,y_test-sig_test), dim=1)
+            output = model_f(data.reshape(data.shape[0],1,data.shape[1]))#.reshape(out_shape)
+            output_z = output[:,ndim_y:]  # extract the model output y
+        else:
+            output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
+            output_z = output[:,ndim_y:]  # extract the model output y
     else:
         output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
         output_z = output[:,model.outSchema.LatentSpace]  # extract the model output y
@@ -369,7 +374,7 @@ def plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch
 
     return
 
-def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
+def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False,do_cnn=False):
     """
     Plot examples of test y-data generation
     """
@@ -405,8 +410,13 @@ def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i
 
         # apply backward model to the padded yz data
         if do_double_nn:
-            output = model_r(torch.cat((y,z), dim=1))#.reshape(out_shape)
-            output_x = output[:,:ndim_x]  # extract the model output y
+            if do_cnn:
+                data = torch.cat((y,z), dim=1)
+                output = model_r(data.reshape(data.shape[0],1,data.shape[1]))#.reshape(out_shape)
+                output_x = output[:,:ndim_x]  # extract the model output y
+            else:
+                output = model_r(torch.cat((y,z), dim=1))#.reshape(out_shape)
+                output_x = output[:,:ndim_x]  # extract the model output y
         else:
             output = model(yz_padded.reshape(in_shape),rev=True)#.reshape(out_shape)
             output_x = output[:,model.inSchema.amp[0]:model.inSchema.tau[-1]+1]  # extract the model output y
@@ -441,7 +451,7 @@ def plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,outdir,i
     plt.close()
     return
 
-def plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
+def plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False,do_cnn=False):
     """
     Plots the joint distributions of y variables
     """
@@ -474,8 +484,13 @@ def plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,outdir,i_epoch
 
     # apply forward model to the x data
     if do_double_nn:
-        output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
-        output_y = output[:,:ndim_y]  # extract the model output y    
+        if do_cnn:
+            data = torch.cat((x,y_test-sig_test), dim=1)
+            output = model_f(data.reshape(data.shape[0],1,data.shape[1]))#.reshape(out_shape)
+            output_y = output[:,:ndim_y]  # extract the model output y
+        else:
+            output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
+            output_y = output[:,:ndim_y]  # extract the model output y    
     else:
         output = model(x_padded.reshape(in_shape))
         output_y = output[:, model.outSchema.timeseries]
@@ -553,7 +568,7 @@ def result_stat_tests(inn_samps, mcmc_samps, cnt, parnames):
 
     return ks_mcmc_arr, ks_inn_arr, ad_mcmc_arr, ad_inn_arr
 
-def plot_y_test(model,Nsamp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,r,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False):
+def plot_y_test(model,Nsamp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,r,i_epoch,conv=False,model_f=None,model_r=None,do_double_nn=False,do_cnn=False):
     """
     Plot examples of test y-data generation
     """
@@ -587,8 +602,13 @@ def plot_y_test(model,Nsamp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,outdir,r
 
     # apply forward model to the x data
     if do_double_nn:
-        output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
-        output_y = output[:,:ndim_y]  # extract the model output y
+        if do_cnn:
+            data = torch.cat((x,y_test-sig_test), dim=1)
+            output = model_f(data.reshape(data.shape[0],1,data.shape[1]))#.reshape(out_shape)
+            output_y = output[:,:ndim_y]  # extract the model output y
+        else:
+            output = model_f(torch.cat((x,y_test-sig_test), dim=1))#.reshape(out_shape)
+            output_y = output[:,:ndim_y]  # extract the model output y
     else:
         output = model(x_padded.reshape(in_shape))#.reshape(out_shape)
         output_y = output[:,model.outSchema.timeseries]  # extract the model output y
@@ -620,13 +640,13 @@ def main():
     ## If file exists, delete it ##
     if os.path.exists(out_dir):
         shutil.rmtree(out_dir)
-    else:    ## Show an error ##
-        print("Error: %s file not found" % myfile)
+    else:    ## Show a message ##
+        print("Attention: %s file not found" % out_dir)
 
     # setup output directory - if it does not exist
-    os.system('mkdir -p %s' % out_dir)
-    os.system('mkdir -p %s/latest' % out_dir)
-    os.system('mkdir -p %s/animations' % out_dir)
+    os.makedirs('%s' % out_dir)
+    os.makedirs('%s/latest' % out_dir)
+    os.makedirs('%s/animations' % out_dir)
 
 
     # generate data
@@ -841,7 +861,12 @@ def main():
                                     y_samps = y_samps.to(dev)
 
                                     # use the network to predict parameters
-                                    if do_double_nn: rev_x = model_r(y_samps)
+                                    if do_double_nn:
+                                        if do_cnn: 
+                                            y_samps = y_samps.reshape(y_samps.shape[0],1,y_samps.shape[1]) 
+                                            rev_x = model_r(y_samps)
+                                        else:
+                                            rev_x = model_r(y_samps)
                                     else: rev_x = model(y_samps, rev=True)
                                     rev_x = rev_x.cpu().data.numpy()
 
@@ -922,14 +947,14 @@ def main():
                 if do_double_nn:
                     # plot predicted time series vs. actually time series examples
                     model=None
-                    plot_y_test(model,N_samp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,r,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
+                    plot_y_test(model,N_samp,usepars,sigma,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,r,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=do_double_nn,do_cnn=do_cnn)
 
                     # make y_dist_plot
-                    plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
+                    plot_y_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=do_double_nn,do_cnn=do_cnn)
 
-                    plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
+                    plot_x_evolution(model,ndim_x,ndim_y,ndim_z,ndim_tot,sigma,parnames,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=do_double_nn,do_cnn=do_cnn)
 
-                    plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True)
+                    plot_z_dist(model,ndim_x,ndim_y,ndim_z,ndim_tot,usepars,sigma,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=do_double_nn,do_cnn=do_cnn)
 
                 else:
                     # plot predicted time series vs. actually time series examples
@@ -945,7 +970,7 @@ def main():
                 # plot evolution of y
                 if not do_double_nn:
                     for c in range(ndim_x):
-                        plot_y_evolution(model,c,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True) 
+                        plot_y_evolution(model,c,parnames,ndim_x,ndim_y,ndim_z,ndim_tot,out_dir,epoch,conv=False,model_f=model_f,model_r=model_r,do_double_nn=True,do_cnn=do_cnn) 
 
                 # plot ad and ks results [ks_mcmc_arr,ks_inn_arr,ad_mcmc_arr,ad_inn_arr]
                 for p in range(ndim_x):
@@ -1043,7 +1068,7 @@ def main():
                     axes_loss.semilogy(np.arange(len(losses)), lo, label=lossLabels[i])
                 axes_loss.semilogy(np.arange(len(losses)), wRevScale_tot, label='fadeIn')
                 axes_loss.legend(loc='upper left')
-                plt.savefig('%s/latest/losses.pdf' % out_dir)
+                plt.savefig('%s/latest/losses.png' % out_dir)
                 plt.close(fig)
 
                 # make log scale loss plot
@@ -1058,7 +1083,7 @@ def main():
                 axes_loss.set_xscale('log')
                 axes_loss.set_yscale('log')
                 axes_loss.legend(loc='upper left')
-                plt.savefig('%s/latest/losses_logscale.pdf' % out_dir)
+                plt.savefig('%s/latest/losses_logscale.png' % out_dir)
                 plt.close(fig)
 
     except KeyboardInterrupt:

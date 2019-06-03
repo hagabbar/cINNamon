@@ -23,60 +23,23 @@ class nn_double_f(nn.Sequential):
 
     def __init__(self,size_in,size_out):
         super().__init__()
-        self.conv1 = nn.Conv1d(size_in, 6, 3)
+        self.conv1 = nn.Conv1d(1, 6, 3)
         self.conv2 = nn.Conv1d(6, 16, 3)
         # an affine operation: y = Wx + b
-        self.fc1 = nn.Linear(16 * 6 * 6, 120)  # 6*6 from image dimension
+        self.fc1 = nn.Linear(16 * 15, 120)  # 6*6 from image dimension
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, size_out)
-
-        #self.in_lay = nn.Conv1d(size_in, 8, 5)
-        #self.hidden1 = nn.Conv1d(8, 16, 5)
-        #self.hidden2 = nn.Conv1d(16, 32, 5)
-        #self.hidden4 = nn.Linear(32 * 16 * 16 * 8 * 8, 120)  # 6*6 from image dimension
-        #self.hidden5 = nn.Linear(120, 84)
-        #self.hidden6 = nn.Linear(84, size_out)
   
     def forward(self, x):
         # Max pooling over a (2, 2) window
         x = F.relu(self.conv1(x))
         # If the size is a square you can only specify a single number
         x = F.relu(self.conv2(x))
-        x = x.view(-1, self.num_flat_features(x))
+        x = x.reshape(x.size(0), -1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
-        #x = self.in_lay(x)
-        #x = F.elu(x)
-        #x = self.hidden1(x)
-        #x = F.elu(x)
-        #x = self.hidden2(x)
-        #x = F.elu(x)
-        #x = self.hidden3(x)
-        #x = F.elu(x)
-        #x = x.view(-1, self.num_flat_features(x))
-        #x = self.hidden4(x)
-        #x = F.elu(x)
-        #x = self.hidden5(x)
-        #x = F.elu(x)
-        #x = self.hidden6(x)
-        #x = self.output(x)
-        return x
-
-# class which defines reverse model
-class nn_double_r(nn.Sequential):
-    def __init__(self,size_in,size_out):
-        super().__init__()
-        self.in_lay = nn.Linear(size_in, 8)
-        self.hidden1 = nn.Linear(8, 16)
-        self.hidden2 = nn.Linear(16, 16)
-        self.hidden3 = nn.Linear(16, 32)
-        self.hidden4 = nn.Linear(32, 32)
-        self.hidden5 = nn.Linear(32, 64)
-        self.hidden6 = nn.Linear(64, 64)
-        self.output = nn.Linear(64, size_out)
-  
-    def forward(self, x):
+        """
         x = self.in_lay(x)
         x = F.elu(x)
         x = self.hidden1(x)
@@ -91,6 +54,61 @@ class nn_double_r(nn.Sequential):
         x = F.elu(x)
         x = self.hidden6(x)
         x = self.output(x)
+        """
+        return x
+
+# class which defines reverse model
+class nn_double_r(nn.Sequential):
+    """
+    def __init__(self,size_in,size_out):
+        super().__init__()
+        self.in_lay = nn.Linear(size_in, 8)
+        self.hidden1 = nn.Linear(8, 16)
+        self.hidden2 = nn.Linear(16, 16)
+        self.hidden3 = nn.Linear(16, 32)
+        self.hidden4 = nn.Linear(32, 32)
+        self.hidden5 = nn.Linear(32, 64)
+        self.hidden6 = nn.Linear(64, 64)
+        self.output = nn.Linear(64, size_out)
+    """
+    def __init__(self,size_in,size_out):
+        super().__init__()
+        self.conv1 = nn.Conv1d(1, 8, 3)
+        self.conv2 = nn.Conv1d(8, 16, 3)
+        self.conv3 = nn.Conv1d(16,32, 3)
+        self.conv4 = nn.Conv1d(32,32, 3)
+        # an affine operation: y = Wx + b
+        self.fc1 = nn.Linear(32 * 24, 64)  # 6*6 from image dimension
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, size_out)
+    
+    def forward(self, x):
+        # Max pooling over a (2, 2) window
+        x = F.relu(self.conv1(x))
+        # If the size is a square you can only specify a single number
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
+        x = x.reshape(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        """
+        x = self.in_lay(x)
+        x = F.elu(x)
+        x = self.hidden1(x)
+        x = F.elu(x)
+        x = self.hidden2(x)
+        x = F.elu(x)
+        x = self.hidden3(x)
+        x = F.elu(x)
+        x = self.hidden4(x)
+        x = F.elu(x)
+        x = self.hidden5(x)
+        x = F.elu(x)
+        x = self.hidden6(x)
+        x = self.output(x)
+        """
         return x
 
 # class which trains model
@@ -156,8 +174,8 @@ class DoubleNetTrainer:
 
         randn = torch.randn(self.batchSize, self.ndata, dtype=torch.float, device=self.dev)
 
-        optimizer_f = optim.SGD(self.model_f.parameters(), lr=0.01, weight_decay= 1e-6, momentum = 0.9, nesterov = True)
-        optimizer_r = optim.SGD(self.model_r.parameters(), lr=0.01, weight_decay= 1e-6, momentum = 0.9, nesterov = True)
+        optimizer_f = self.optim_f#optim.SGD(self.model_f.parameters(), lr=0.01, weight_decay= 1e-6, momentum = 0.9, nesterov = True)
+        optimizer_r = self.optim_r#optim.SGD(self.model_r.parameters(), lr=0.01, weight_decay= 1e-6, momentum = 0.9, nesterov = True)
 
         losses = [0,0,0,0]
 
@@ -201,17 +219,16 @@ class DoubleNetTrainer:
             ## 1. forward propagation
             data = torch.cat((x[:],
                               n[:]), dim=1)
-            if do_cnn: data = data.reshape(data.shape[0],data.shape[1],1)
-            print(data.shape)
-            exit()
+            if do_cnn: data = data.reshape(data.shape[0],1,data.shape[1])
             output = self.model_f(data)
-            exit()
+            
 
             ## 2. loss calculation
             target = torch.cat((y[:],
                                 randn), dim=1)
+
             loss_y = self.loss_fit(output[:,:y.shape[1]], y[:])
-        
+
             ## 3. backward propagation
             loss_y.backward(retain_graph=True)
         
@@ -231,6 +248,9 @@ class DoubleNetTrainer:
             # reverse process
             #################
             ## 1. forward propagation
+            output= torch.cat((y[:],output[:,y.shape[1]:]),dim=1)
+            if do_cnn: 
+                output = output.reshape(output.shape[0],1,output.shape[1])
             output = self.model_r(output.data)
 
             ## 2. loss calculation
