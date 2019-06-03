@@ -1,0 +1,22 @@
+sigma: 0.2
+ndata: 16
+T: 1.0
+seed: 1
+n_neurons: 64
+bound: [0.0, 1.0, 0.0, 1.0, 0.0, 8.0, 0.0, 3.0, 0.0, 1.0]
+conv_nn: False
+filtsize: 3
+dropout: 0.0
+clamp: 2.0
+ndim_z: 16
+tot_epoch: 1000000
+lr: 0.00025
+latentAlphas: [1.0]
+backwardAlphas: None
+zerosNoiseScale: 0.05
+wPred: 500.0
+wLatent: 2000.0
+wRev: 2000.0
+tot_dataset_size: 10000
+numInvLayers: 6
+batchsize: 2048
