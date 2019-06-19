@@ -54,6 +54,7 @@
 
 import numpy as np
 import tensorflow as tf
+from sys import exit
 
 from Neural_Networks import OELBO_decoder_difference
 from Neural_Networks import OELBO_encoder
@@ -109,9 +110,12 @@ def train(params, x_data, y_data_h, y_data_l, save_dir):
         # NORMALISE INPUTS
         yl_ph_n = tf_normalise_dataset(yl_ph)
         yh_ph_n = tf_normalise_dataset(yh_ph)
+        #yl_ph_n = yl_ph
+        #yh_ph_n = yh_ph
 #        yh_ph_d = tf_normalise_dataset(yh_ph-y_mu)
         yh_ph_d = yh_ph_n-yl_ph_n
         x_ph_n = tf_normalise_dataset(x_ph)
+        #x_ph_n = x_ph
         
         # GET p(Z|X,Yl)
         zxyl_mean,zxyl_log_sig_sq = ENC_XYltoZ._calc_z_mean_and_sigma(tf.concat([x_ph_n,yl_ph_n],1))
@@ -224,9 +228,11 @@ def run(params, x_data_test, y_data_test_l, siz_high_res, load_dir):
         
         # NORMALISE INPUTS
         yl_ph_n = tf_normalise_dataset(yl_ph)
+        #yl_ph_n = yl_ph
 #        yh_ph_d = tf_normalise_dataset(yh_ph-y_mu)
         x_ph_n = tf_normalise_dataset(x_ph)
-        
+        #x_ph_n = x_ph        
+
         # GET p(Z|X,Yl)
         zxyl_mean,zxyl_log_sig_sq = ENC_XYltoZ._calc_z_mean_and_sigma(tf.concat([x_ph_n,yl_ph_n],1))
         rxyl_samp = ENC_XYhYltoZ._sample_from_gaussian_dist(tf.shape(x_ph_n)[0], z_dimension, zxyl_mean, tf.log(tf.exp(zxyl_log_sig_sq)+SMALL_CONSTANT))
