@@ -116,6 +116,8 @@ def train(params, x_data, y_data_l, siz_high_res, load_dir, save_dir):
         # NORMALISE INPUTS
         yl_ph_n = tf_normalise_dataset(yt_ph)
         x_ph_n = tf_normalise_dataset(x_ph)
+        #yl_ph_n = yt_ph
+        #x_ph_n = x_ph
         
         # GET p(Z|X,Yl)
         zxyl_mean,zxyl_log_sig_sq = ENC_XYltoZ._calc_z_mean_and_sigma(tf.concat([x_ph_n,yl_ph_n],1))
@@ -136,6 +138,7 @@ def train(params, x_data, y_data_l, siz_high_res, load_dir, save_dir):
         # GET r(z|y)
         y_ph = tf.placeholder(dtype=tf.float32, shape=[None, ysh1], name="y_ph")
         y_ph_n = tf_normalise_dataset(y_ph)
+        #y_ph_n = y_ph
         zy_mean,zy_log_sig_sq = autoencoder_ENC._calc_z_mean_and_sigma(y_ph_n)
         
         # DRAW FROM r(z|y)
@@ -288,6 +291,8 @@ def resume_training(params, x_data, y_data_l, siz_high_res, load_dir, save_dir):
         # NORMALISE INPUTS
         yl_ph_n = tf_normalise_dataset(yt_ph)
         x_ph_n = tf_normalise_dataset(x_ph)
+        #yl_ph_n = yt_ph
+        #x_ph_n = x_ph
         
         # GET p(Z|X,Yl)
         zxyl_mean,zxyl_log_sig_sq = ENC_XYltoZ._calc_z_mean_and_sigma(tf.concat([x_ph_n,yl_ph_n],1))
@@ -308,6 +313,7 @@ def resume_training(params, x_data, y_data_l, siz_high_res, load_dir, save_dir):
         # GET r(z|y)
         y_ph = tf.placeholder(dtype=tf.float32, shape=[None, ysh1], name="y_ph")
         y_ph_n = tf_normalise_dataset(y_ph)
+        #y_ph_n = y_ph
         zy_mean,zy_log_sig_sq = autoencoder_ENC._calc_z_mean_and_sigma(y_ph_n)
         
         # DRAW FROM r(z|y)
@@ -438,6 +444,7 @@ def run(params, y_data_test, siz_x_data, load_dir):
         # GET r(z|y)
         y_ph = tf.placeholder(dtype=tf.float32, shape=[None, ysh1], name="y_ph")
         y_ph_n = tf_normalise_dataset(y_ph)
+        #y_ph_n = y_ph
         zy_mean,zy_log_sig_sq = autoencoder_ENC._calc_z_mean_and_sigma(y_ph_n)
         
         # DRAW FROM r(z|y)
@@ -467,8 +474,8 @@ def run(params, y_data_test, siz_x_data, load_dir):
         saver_VICI.restore(session,load_dir)
     
     # ESTIMATE TEST SET RECONSTRUCTION PER-PIXEL APPROXIMATE MARGINAL LIKELIHOOD and draw from q(x|y)
-    ns = 100 # number of samples to use to estimate per-pixel marginal
     n_ex_s = params['n_samples'] # number of samples to save per reconstruction
+    ns = np.maximum(100,n_ex_s) # number of samples to use to estimate per-pixel marginal
     
     XM = np.zeros((np.shape(y_data_test)[0],xsh1,ns))
     XSX = np.zeros((np.shape(y_data_test)[0],xsh1,ns))
@@ -487,7 +494,8 @@ def run(params, y_data_test, siz_x_data, load_dir):
     xm = np.mean(XM,axis=2)
     xsx = np.std(XSX,axis=2)
     xs = np.std(XM,axis=2)
-    XS = XSA[:,:,0:n_ex_s]
+    XS = XSX[:,:,0:n_ex_s]
+    #XS = XSA[:,:,0:n_ex_s]
     
                 
     return xm, xsx, XS, pmax
@@ -521,6 +529,8 @@ def compute_ELBO(params, x_data, y_data_h, load_dir):
         y_ph = tf.placeholder(dtype=tf.float32, shape=[None, ysh1], name="y_ph")
         y_ph_n = tf_normalise_dataset(y_ph)
         x_ph_n = tf_normalise_dataset(x_ph)
+        #y_ph_n = y_ph
+        #x_ph_n = x_ph
         zy_mean,zy_log_sig_sq = autoencoder_ENC._calc_z_mean_and_sigma(y_ph_n)
         
         # DRAW FROM r(z|y)

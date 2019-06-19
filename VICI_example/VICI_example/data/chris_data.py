@@ -1,6 +1,4 @@
 import numpy as np
-import torch
-import torch.utils.data
 from time import time
 from scipy.stats import gaussian_kde
 
@@ -42,93 +40,106 @@ def generate(tot_dataset_size,ndata=8,usepars=[0,1],sigma=0.1,seed=0):
 
     return pars, data, xvec, sig, names
 
-def get_lik(ydata,sigma=0.2,usepars=[0,1],Nsamp=1000):
+def mcmc_sampler(r,N_samp,ndim_x,labels_test,sigma,usepars):
     """
-    returns samples from the posterior obtained using trusted 
-    techniques
+    Iterate over all test samples to produce mcmc samples
     """
-
-    def logposterior(theta, data, sigma, x, usepars):
+    
+    def get_lik(ydata,sigma=0.2,usepars=[0,1],Nsamp=1000):
         """
-        The natural logarithm of the joint posterior.
-        Args:
-            theta (tuple): a sample containing individual parameter values
-            data (list): the set of data/observations
-            sigma (float): the standard deviation of the data points
-            x (list): the abscissa values at which the data/model is defined
+        returns samples from the posterior obtained using trusted 
+        techniques
         """
 
-        lp = logprior(theta) # get the prior
+        def logposterior(theta, data, sigma, x, usepars):
+            """
+            The natural logarithm of the joint posterior.
+            Args:
+                theta (tuple): a sample containing individual parameter values
+                data (list): the set of data/observations
+                sigma (float): the standard deviation of the data points
+                x (list): the abscissa values at which the data/model is defined
+            """
 
-        # if the prior is not finite return a probability of zero (log probability of -inf)
-        if not np.isfinite(lp):
-            return -np.inf
+            lp = logprior(theta) # get the prior
 
-        # return the likeihood times the prior (log likelihood plus the log prior)
-        return lp + loglikelihood(theta, data, sigma, x, usepars)
+            # if the prior is not finite return a probability of zero (log probability of -inf)
+            if not np.isfinite(lp):
+                return -np.inf
 
-    def loglikelihood(theta, data, sigma, x, usepars):
-        """
-        The natural logarithm of the joint likelihood.
-        Args:
-            theta (tuple): a sample containing individual parameter values
-            data (list): the set of data/observations
-            sigma (float): the standard deviation of the data points
-            x (list): the abscissa values at which the data/model is defined
-        Note:
-            We do not include the normalisation constants (as discussed above).
-        """
+            # return the likeihood times the prior (log likelihood plus the log prior)
+            return lp + loglikelihood(theta, data, sigma, x, usepars)
 
-        # fill in the parameters and evaluate the model
-        pars = sg_default*np.ones(nsg)
-        pars[usepars] = theta
-        md = sg(x,pars)
+        def loglikelihood(theta, data, sigma, x, usepars):
+            """
+            The natural logarithm of the joint likelihood.
+            Args:
+                theta (tuple): a sample containing individual parameter values
+                data (list): the set of data/observations
+                sigma (float): the standard deviation of the data points
+                x (list): the abscissa values at which the data/model is defined
+            Note:
+                We do not include the normalisation constants (as discussed above).
+            """
 
-        # return the log likelihood
-        return -0.5*np.sum(((md - data)/sigma)**2)
+            # fill in the parameters and evaluate the model
+            pars = sg_default*np.ones(nsg)
+            pars[usepars] = theta
+            md = sg(x,pars)
 
-    def logprior(theta):
-        """
-        The natural logarithm of the prior probability.
-        Args:
-            theta (tuple): a sample containing individual parameter values
-        Note:
-            We can ignore the normalisations of the prior here.
-        """
+            # return the log likelihood
+            return -0.5*np.sum(((md - data)/sigma)**2)
 
-        if np.any(theta<0) or np.any(theta>1.0):
-            return -np.inf
-        return 0.0
+        def logprior(theta):
+            """
+            The natural logarithm of the prior probability.
+            Args:
+                theta (tuple): a sample containing individual parameter values
+            Note:
+                We can ignore the normalisations of the prior here.
+            """
 
-    ndims = len(usepars)        # number of search dimensions
-    N = ydata.size              # length of timeseries data
-    x = np.arange(N)/float(N)   # time vector
-    Nens = 100                  # number of ensemble points
-    Nburnin = 500               # number of burn-in samples
-    Nsamples = 500              # number of final posterior samples
-    p0 = [np.random.rand(ndims) for i in range(Nens)]
+            if np.any(theta<0) or np.any(theta>1.0):
+                return -np.inf
+            return 0.0
 
-    import emcee # import the emcee package
-    print('emcee version: {}'.format(emcee.__version__))
+        ndims = len(usepars)        # number of search dimensions
+        N = ydata.size              # length of timeseries data
+        x = np.arange(N)/float(N)   # time vector
+        Nens = 100                  # number of ensemble points
+        Nburnin = 500               # number of burn-in samples
+        Nsamples = 500              # number of final posterior samples
+        p0 = [np.random.rand(ndims) for i in range(Nens)]
 
-    # set additional args for the posterior (the data, the noise std. dev., and the abscissa)
-    argslist = (ydata, sigma, x, usepars)
+        import emcee # import the emcee package
+        print('emcee version: {}'.format(emcee.__version__))
 
-    # set up the sampler
-    sampler = emcee.EnsembleSampler(Nens, ndims, logposterior, args=argslist)
+        # set additional args for the posterior (the data, the noise std. dev., and the abscissa)
+        argslist = (ydata, sigma, x, usepars)
 
-    # pass the initial samples and total number of samples required
-    t0 = time() # start time
-    sampler.run_mcmc(p0, Nsamples+Nburnin);
-    t1 = time()
+        # set up the sampler
+        sampler = emcee.EnsembleSampler(Nens, ndims, logposterior, args=argslist)
 
-    timeemcee = (t1-t0)
-    print("Time taken to run 'emcee' is {} seconds".format(timeemcee))
+        # pass the initial samples and total number of samples required
+        t0 = time() # start time
+        sampler.run_mcmc(p0, Nsamples+Nburnin);
+        t1 = time()
 
-    # extract the samples (removing the burn-in)
-    samples_emcee = sampler.chain[:, Nburnin:, :].reshape((-1, ndims))
-    idx = np.random.randint(low=0,high=samples_emcee.shape[0],size=Nsamp)
-    return samples_emcee[idx,:]
+        timeemcee = (t1-t0)
+        print("Time taken to run 'emcee' is {} seconds".format(timeemcee))
+
+        # extract the samples (removing the burn-in)
+        samples_emcee = sampler.chain[:, Nburnin:, :].reshape((-1, ndims))
+        idx = np.random.randint(low=0,high=samples_emcee.shape[0],size=Nsamp)
+        return samples_emcee[idx,:]
+
+    cnt = 0
+    samples = np.zeros((r*r,N_samp,ndim_x))
+    for i in range(r):
+        for j in range(r):
+            samples[cnt,:,:] = get_lik(np.array(labels_test[cnt,:]).flatten(),sigma=sigma,usepars=usepars,Nsamp=N_samp)
+            cnt += 1
+    return samples
 
 def overlap(x,y):
     """
