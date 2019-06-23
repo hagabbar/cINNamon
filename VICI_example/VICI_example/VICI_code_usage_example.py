@@ -19,7 +19,7 @@ from Neural_Networks import batch_manager
 from data import make_samples, chris_data
 import plots
 
-run_label='gpu0',            # label for run
+run_label='gpu1',            # label for run
 plot_dir="/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/VICI/%s" % run_label,                 # plot directory
 
 # Defining the list of parameter that need to be fed into the models
@@ -28,14 +28,14 @@ def get_params():
         image_size = [1,16], # Images Size
         print_values=True, # optionally print values every report interval
         n_samples = 5000, # number of posterior samples to save per reconstruction upon inference 
-        num_iterations=1001, # number of iterations inference model (inverse reconstruction)
+        num_iterations=100001, # number of iterations inference model (inverse reconstruction)
         initial_training_rate=0.0001, # initial training rate for ADAM optimiser inference model (inverse reconstruction)
         batch_size=100, # batch size inference model (inverse reconstruction)
         report_interval=500, # interval at which to save objective function values and optionally print info during inference training
         z_dimension=800, # number of latent space dimensions inference model (inverse reconstruction)
         n_weights = 2500, # number of dimensions of the intermediate layers of encoders and decoders in the inference model (inverse reconstruction)
         save_interval=500, # interval at which to save inference model weights
-        num_iterations_fw= 2001, # number of iterations of multifidelity forward model training
+        num_iterations_fw= 200001, # number of iterations of multifidelity forward model training
         initial_training_rate_fw=0.00002, # initial training rate for ADAM optimiser of multifidelity forward model training
         report_interval_fw=500, # interval at which to save objective function values and optionally print info during multifidelity forward model training
         z_dimensions_fw = 10, # latent space dimensionality of forward model

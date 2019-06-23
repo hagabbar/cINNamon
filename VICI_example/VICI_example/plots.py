@@ -405,22 +405,23 @@ def make_plots(params,samples,rev_x,pos_test):
                 for i in range(params['r']):
                     for j in range(params['r']):
                         # compute the n-d overlap
-                        #if k==0 and nextk==1:
-                        #    ol = data_maker.overlap(samples[cnt,:,:params['ndim_x']],rev_x[cnt,:,:params['ndim_x']])
-                        #    olvec[i,j,0] = ol
+                        if k==0 and nextk==1:
+                            overlap_rev = rev_x.reshape(rev_x.shape[0],rev_x.shape[2],rev_x.shape[1])
+                            ol = data_maker.overlap(samples[cnt,:,:params['ndim_x']],overlap_rev[cnt,:,:params['ndim_x']])
+                            olvec[i,j,0] = ol
 
                         # plot the samples and the true contours
                         axes[i,j].clear()
                         axes[i,j].scatter(samples[cnt,:,k], samples[cnt,:,nextk],c='b',s=0.2,alpha=0.5, label='MCMC')
-                        axes[i,j].scatter(rev_x[cnt,:,k], rev_x[cnt,:,nextk],c='r',s=0.2,alpha=0.5, label='INN')
-                        #axes[i,j].set_xlim([0,1])
-                        #axes[i,j].set_ylim([0,1])
+                        axes[i,j].scatter(rev_x[cnt,k,:], rev_x[cnt,nextk,:],c='r',s=0.2,alpha=0.5, label='INN')
+                        axes[i,j].set_xlim([0,1])
+                        axes[i,j].set_ylim([0,1])
                         axes[i,j].plot(pos_test[cnt,k],pos_test[cnt,nextk],'+c',markersize=8, label='Truth')
-                        #oltxt = '%.2f' % olvec[i,j,0]
-                        #axes[i,j].text(0.90, 0.95, oltxt,
-                        #    horizontalalignment='right',
-                        #    verticalalignment='top',
-                        #        transform=axes[i,j].transAxes)
+                        oltxt = '%.2f' % olvec[i,j,0]
+                        axes[i,j].text(0.90, 0.95, oltxt,
+                            horizontalalignment='right',
+                            verticalalignment='top',
+                                transform=axes[i,j].transAxes)
                         matplotlib.rc('xtick', labelsize=8)
                         matplotlib.rc('ytick', labelsize=8)
                         axes[i,j].set_xlabel(parname1) if i==params['r']-1 else axes[i,j].set_xlabel('')
