@@ -20,7 +20,7 @@ from data import make_samples, chris_data
 import plots
 
 run_label='gpu1',            # label for run
-plot_dir="/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/VICI/%s" % run_label,                 # plot directory
+plot_dir="D:/LIGO/cINNamon_output/VICI/%s" % run_label,                 # plot directory
 
 # Defining the list of parameter that need to be fed into the models
 def get_params():
@@ -36,14 +36,14 @@ def get_params():
         n_weights = 2500, # number of dimensions of the intermediate layers of encoders and decoders in the inference model (inverse reconstruction)
         save_interval=500, # interval at which to save inference model weights
         num_iterations_fw= 200001, # number of iterations of multifidelity forward model training
-        initial_training_rate_fw=0.00002, # initial training rate for ADAM optimiser of multifidelity forward model training
+        initial_training_rate_fw=0.0002, # initial training rate for ADAM optimiser of multifidelity forward model training
         report_interval_fw=500, # interval at which to save objective function values and optionally print info during multifidelity forward model training
         z_dimensions_fw = 10, # latent space dimensionality of forward model
         n_weights_fw = 3000, # intermediate layers dimensionality in forward model neural networks
         batch_size_fw=100, # batch size of multifidelity forward model training
         save_interval_fw=500, # interval at which to save multi-fidelity forward model weights
 
-        r = 2,                      # the grid dimension for the output tests
+        r = 4,                      # the grid dimension for the output tests
         ndim_x=3,                    # number of parameters to PE on
         sigma=0.2,                   # stadnard deviation of the noise on signal
         usepars=[0,1,2],             # which parameters you want to do PE on
@@ -76,8 +76,9 @@ def get_params():
 
 # Get the training/test data and parameters of run
 params=get_params()
-x_data_train_h, y_data_train_lh, _, y_data_test_h,pos_test = make_samples.get_sets(params)
+x_data_train_h, _, y_data_train_lh, y_data_test_h,pos_test = make_samples.get_sets(params)
 x_data_train, y_data_train_l, y_data_train_h = x_data_train_h, y_data_train_lh, y_data_train_lh
+
 
 # Get mcmc samples
 samples = chris_data.mcmc_sampler(params['r'],params['n_samples'],params['ndim_x'],y_data_test_h,params['sigma'],params['usepars'])
@@ -104,6 +105,3 @@ plots.make_dirs(params['plot_dir'][0])
 
 # Generate final results plots
 plots.make_plots(params,samples,XS,pos_test)
-
-print(xm.shape,xsx.shape,XS.shape,pmax.shape)
-exit()
