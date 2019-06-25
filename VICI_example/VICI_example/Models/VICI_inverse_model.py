@@ -527,8 +527,8 @@ def run(params, y_data_test, siz_x_data, load_dir):
     xm = np.mean(XM,axis=2)
     xsx = np.std(XSX,axis=2)
     xs = np.std(XM,axis=2)
-    #XS = XSX[:,:,0:n_ex_s]
-    XS = XSA[:,:,0:n_ex_s]
+    XS = XSX[:,:,0:n_ex_s]
+    #XS = XSA[:,:,0:n_ex_s]
     
                 
     return xm, xsx, XS, pmax

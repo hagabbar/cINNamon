@@ -40,7 +40,7 @@ def generate(tot_dataset_size,ndata=8,usepars=[0,1],sigma=0.1,seed=0):
 
     return pars, data, xvec, sig, names
 
-def mcmc_sampler(r,N_samp,ndim_x,labels_test,sigma,usepars):
+def mcmc_sampler(r,N_samp,ndim_x,labels_test,sigma,usepars,n_burnin=2000):
     """
     Iterate over all test samples to produce mcmc samples
     """
@@ -107,7 +107,7 @@ def mcmc_sampler(r,N_samp,ndim_x,labels_test,sigma,usepars):
         N = ydata.size              # length of timeseries data
         x = np.arange(N)/float(N)   # time vector
         Nens = 100                  # number of ensemble points
-        Nburnin = 500               # number of burn-in samples
+        Nburnin = n_burnin               # number of burn-in samples
         Nsamples = 500              # number of final posterior samples
         p0 = [np.random.rand(ndims) for i in range(Nens)]
 
