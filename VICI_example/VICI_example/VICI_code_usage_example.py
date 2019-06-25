@@ -20,35 +20,36 @@ from data import make_samples, chris_data
 import plots
 
 run_label='gpu1',            # label for run
-plot_dir="D:/LIGO/cINNamon_output/VICI/%s" % run_label,                 # plot directory
+plot_dir="/home/hunter.gabbard/public_html/CBC/cINNamon/gausian_results/VICI/%s" % run_label,                 # plot directory
+ndata=32                    # y dimension size
 
 # Defining the list of parameter that need to be fed into the models
 def get_params():
     params = dict(
-        image_size = [1,16], # Images Size
+        image_size = [1,ndata], # Images Size
         print_values=True, # optionally print values every report interval
         n_samples = 5000, # number of posterior samples to save per reconstruction upon inference 
-        num_iterations=100001, # number of iterations inference model (inverse reconstruction)
-        initial_training_rate=0.0001, # initial training rate for ADAM optimiser inference model (inverse reconstruction)
-        batch_size=100, # batch size inference model (inverse reconstruction)
+        num_iterations=5000001, # number of iterations inference model (inverse reconstruction)
+        initial_training_rate=0.00001, # initial training rate for ADAM optimiser inference model (inverse reconstruction)
+        batch_size=1000, # batch size inference model (inverse reconstruction)
         report_interval=500, # interval at which to save objective function values and optionally print info during inference training
-        z_dimension=800, # number of latent space dimensions inference model (inverse reconstruction)
-        n_weights = 2500, # number of dimensions of the intermediate layers of encoders and decoders in the inference model (inverse reconstruction)
-        save_interval=500, # interval at which to save inference model weights
-        num_iterations_fw= 200001, # number of iterations of multifidelity forward model training
-        initial_training_rate_fw=0.0002, # initial training rate for ADAM optimiser of multifidelity forward model training
+        z_dimension=50, # number of latent space dimensions inference model (inverse reconstruction)
+        n_weights = 1024, # number of dimensions of the intermediate layers of encoders and decoders in the inference model (inverse reconstruction)
+        save_interval=2000, # interval at which to save inference model weights
+        num_iterations_fw= 20001, # number of iterations of multifidelity forward model training
+        initial_training_rate_fw=0.00002, # initial training rate for ADAM optimiser of multifidelity forward model training
         report_interval_fw=500, # interval at which to save objective function values and optionally print info during multifidelity forward model training
-        z_dimensions_fw = 10, # latent space dimensionality of forward model
-        n_weights_fw = 3000, # intermediate layers dimensionality in forward model neural networks
-        batch_size_fw=100, # batch size of multifidelity forward model training
-        save_interval_fw=500, # interval at which to save multi-fidelity forward model weights
+        z_dimensions_fw = 5, # latent space dimensionality of forward model
+        n_weights_fw = 128, # intermediate layers dimensionality in forward model neural networks
+        batch_size_fw=1000, # batch size of multifidelity forward model training
+        save_interval_fw=2000, # interval at which to save multi-fidelity forward model weights
 
-        r = 4,                      # the grid dimension for the output tests
+        ndata = ndata,
+        r = 2,                      # the grid dimension for the output tests
         ndim_x=3,                    # number of parameters to PE on
         sigma=0.2,                   # stadnard deviation of the noise on signal
         usepars=[0,1,2],             # which parameters you want to do PE on
         tot_dataset_size=int(2**20), # total size of training set
-        ndata=16,                    # y dimension size
         seed=42,                     # random seed number
         run_label=run_label,            # label for run
         plot_dir=plot_dir,                 # plot directory
@@ -83,14 +84,16 @@ x_data_train, y_data_train_l, y_data_train_h = x_data_train_h, y_data_train_lh, 
 # Get mcmc samples
 samples = chris_data.mcmc_sampler(params['r'],params['n_samples'],params['ndim_x'],y_data_test_h,params['sigma'],params['usepars'])
 
+# Make directory for plots
+plots.make_dirs(params['plot_dir'][0])
+# Declare plot class variables
+plotter = plots.make_plots(params,samples,None,pos_test)
+
 # First, we learn a multi-fidelity model that lerns to infer high-fidelity (accurate) observations from trget images/objects and low fidelity simulated observations. for this we use the portion of the training set for which we do have real/high fidelity observations.
-#x_data_train_h = x_data_train_h.reshape(x_data_train_h.shape[0],1,x_data_train_h.shape[1])
-#y_data_train_h = y_data_train_h.reshape(y_data_train_h.shape[0],1,y_data_train_h.shape[1])
-#y_data_train_lh = y_data_train_lh.reshape(y_data_train_lh.shape[0],1,y_data_train_lh.shape[1])
-_, _ = VICI_forward_model.train(params, x_data_train_h, y_data_train_h, y_data_train_lh, "forward_model_dir/forward_model.ckpt") # This trains the forward model and saves the weights in forward_model_dir/forward_model.ckpt
+#_, _ = VICI_forward_model.train(params, x_data_train_h, y_data_train_h, y_data_train_lh, "forward_model_dir/forward_model.ckpt", plotter) # This trains the forward model and saves the weights in forward_model_dir/forward_model.ckpt
 
 # We then train the inference model using all training images and associated low-fidelity (inaccurate) observations. Using the previously trained forward model to draw from the observation likelihood.
-_, _ = VICI_inverse_model.train(params, x_data_train, y_data_train_l, np.shape(y_data_train_h)[1], "forward_model_dir/forward_model.ckpt", "inverse_model_dir/inverse_model.ckpt") # This trains the inverse model to recover posteriors using the forward model weights stored in forward_model_dir/forward_model.ckpt and saves the inverse model weights in inverse_model_dir/inverse_model.ckpt 
+_, _ = VICI_inverse_model.train(params, x_data_train, y_data_train_l, np.shape(y_data_train_h)[1], "forward_model_dir/forward_model.ckpt", "inverse_model_dir/inverse_model.ckpt", plotter, y_data_test_h) # This trains the inverse model to recover posteriors using the forward model weights stored in forward_model_dir/forward_model.ckpt and saves the inverse model weights in inverse_model_dir/inverse_model.ckpt 
 
 # The trained inverse model weights can then be used to infer a probability density of solutions given new measurements
 xm, xsx, XS, pmax = VICI_inverse_model.run(params, y_data_test_h, np.shape(x_data_train)[1], "inverse_model_dir/inverse_model.ckpt") # This runs the trained model using the weights stored in inverse_model_dir/inverse_model.ckpt
@@ -100,8 +103,8 @@ xm, xsx, XS, pmax = VICI_inverse_model.run(params, y_data_test_h, np.shape(x_dat
 # - XS = draws from the posterior (3D array with different samples for the same input along the third dimension)
 # - pmax = approximate maxima (approximate 'best' reconstructions)
 
-# Make directory for plots
-plots.make_dirs(params['plot_dir'][0])
-
 # Generate final results plots
-plots.make_plots(params,samples,XS,pos_test)
+plotter = plots.make_plots(params,samples,XS,pos_test)
+
+# Geneerate overlap scatter plots
+plotter.make_overlap_plot()

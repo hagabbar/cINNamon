@@ -145,8 +145,11 @@ def overlap(x,y):
     """
     compute the overlap between samples from 2 differnt distributions
     """
+    if x.shape[1]==1:
+        X = np.mgrid[0:1:100j] 
+        positions = np.vstack([X.ravel()])
 
-    if x.shape[1]==2:
+    elif x.shape[1]==2:
         X, Y = np.mgrid[0:1:20j, 0:1:20j]
         positions = np.vstack([X.ravel(), Y.ravel()])
     elif x.shape[1]==3:

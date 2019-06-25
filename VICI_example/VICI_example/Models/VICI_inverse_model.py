@@ -67,10 +67,12 @@ def tf_normalise_dataset(xp):
     l2norm = tf.sqrt(tf.reduce_sum(tf.multiply(xp,xp),1))
     l2normr = tf.reshape(l2norm,[Xs[0],1])
     x_data = tf.divide(xp,l2normr)
-    
+  
+    # comment this if you want to use normalise 
+    x_data = xp 
     return x_data
 
-def train(params, x_data, y_data_l, siz_high_res, load_dir, save_dir):
+def train(params, x_data, y_data_l, siz_high_res, load_dir, save_dir, plotter, y_data_test):
     
     x_data = x_data
     y_data_train_l = y_data_l
@@ -239,8 +241,39 @@ def train(params, x_data, y_data_l, siz_high_res, load_dir, save_dir):
                     print('KL Divergence:',KL_VAE)
        
         if i % params['save_interval'] == 0:
-             
-                save_path = saver.save(session,save_dir)
+
+            """
+            # ESTIMATE TEST SET RECONSTRUCTION PER-PIXEL APPROXIMATE MARGINAL LIKELIHOOD and draw from q(x|y)
+            n_ex_s = params['n_samples'] # number of samples to save per reconstruction
+            ns = np.maximum(100,n_ex_s) # number of samples to use to estimate per-pixel marginal
+
+            XM = np.zeros((np.shape(y_data_test)[0],params['ndim_x'],ns))
+            XSX = np.zeros((np.shape(y_data_test)[0],params['ndim_x'],ns))
+            XSA = np.zeros((np.shape(y_data_test)[0],params['ndim_x'],ns))
+
+            for i in range(ns):
+                rec_x_m = session.run(x_mean,feed_dict={y_ph:y_data_test})
+                rec_x_mx = session.run(qx_samp,feed_dict={y_ph:y_data_test})
+                rec_x_s = session.run(x_mean,feed_dict={y_ph:y_data_test})
+                XM[:,:,i] = rec_x_m
+                XSX[:,:,i] = rec_x_mx
+                XSA[:,:,i] = rec_x_s
+
+            pmax = session.run(x_pmax,feed_dict={y_ph:y_data_test})
+
+            xm = np.mean(XM,axis=2)
+            xsx = np.std(XSX,axis=2)
+            xs = np.std(XM,axis=2)
+            #XS = XSX[:,:,0:n_ex_s]
+            XS = XSA[:,:,0:n_ex_s]
+                
+            # Generate overlap scatter plots
+            plotter.rev_x = XS
+            plotter.make_overlap_plot()
+            """
+
+            # Save model 
+            save_path = saver.save(session,save_dir)
                 
                 
     return COST_PLOT, KL_PLOT
@@ -494,8 +527,8 @@ def run(params, y_data_test, siz_x_data, load_dir):
     xm = np.mean(XM,axis=2)
     xsx = np.std(XSX,axis=2)
     xs = np.std(XM,axis=2)
-    XS = XSX[:,:,0:n_ex_s]
-    #XS = XSA[:,:,0:n_ex_s]
+    #XS = XSX[:,:,0:n_ex_s]
+    XS = XSA[:,:,0:n_ex_s]
     
                 
     return xm, xsx, XS, pmax

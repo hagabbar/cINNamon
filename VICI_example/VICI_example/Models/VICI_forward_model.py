@@ -63,17 +63,18 @@ from Neural_Networks import batch_manager
 from Neural_Networks import vae_utils
 
 def tf_normalise_dataset(xp):
-    
+     
     Xs = tf.shape(xp)
     
     l2norm = tf.sqrt(tf.reduce_sum(tf.multiply(xp,xp),1))
     l2normr = tf.reshape(l2norm,[Xs[0],1])
     x_data = tf.divide(xp,l2normr)
 #    x_data = xp / l2norm.reshape(Xs[0],1)
-    
+   
+    x_data=xp
     return x_data
 
-def train(params, x_data, y_data_h, y_data_l, save_dir):
+def train(params, x_data, y_data_h, y_data_l, save_dir, plotter):
     
     # LOAD DATA
     x_data = x_data[0:np.shape(y_data_h)[0],:]
@@ -186,7 +187,7 @@ def train(params, x_data, y_data_h, y_data_l, save_dir):
             COST_MF, KL_div = session.run([COST,KL_vae], feed_dict={x_ph:x_data[0:100, :], yl_ph:y_data_train_l[0:100, :], yh_ph:y_data_train_h[0:100, :]})
             COST_PLOT_MF[nif] = COST_MF
             KL_PLOT_MF[nif] = KL_div
-            
+
             if params['print_values']==True:
                 print('--------------------------------------------------------------')
                 print('Iteration:',i)
@@ -195,6 +196,10 @@ def train(params, x_data, y_data_h, y_data_l, save_dir):
     
         if i % params['save_interval_fw'] == 0:
             save_path = saver.save(session,save_dir)
+
+            # Generate forward estimation results
+            plotter.plot_y_test(i)
+            plotter.plot_y_dist(i)
     
     return COST_PLOT_MF, KL_PLOT_MF
     
