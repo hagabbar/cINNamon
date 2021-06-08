@@ -19,7 +19,7 @@ nbconvert==5.4.1
 nbformat==4.4.0
 numpy==1.16.0
 pandocfilters==1.4.2
-Pillow==5.4.1
+Pillow==8.2.0
 Pygments==2.3.1
 pyparsing==2.3.1
 python-dateutil==2.7.5
